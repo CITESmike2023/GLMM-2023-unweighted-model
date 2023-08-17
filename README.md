@@ -1,11 +1,11 @@
 
 <p> <img src="images/UNCiteslogo.png" width="10%" height="100%" style="display: block; margin: auto auto auto 0;" align="top"/> <img src="images/MIKELogo.png" width="25%" height="100%" style="display: block; margin: auto auto auto 0;" align="botom"/>   </p>
 
-# MIKE-GLMM 2022 (unweighted model)
+# MIKE-GLMM 2023 (unweighted model)
 PIKE TREND ANALYSIS USING A BAYESIAN GENERALISED LINEAR MIXED MODEL APPROACH IN R
 
 CITES MIKE Programme
-June  2022
+August 2023
 
 This repository contains R script used to analyse data from the Monitoring the Illegal Killing of Elephants (MIKE) Programme to produce outputs for reports to the
 relevant meetings of the Convention for International Trade in Endangered Species of Wild Fauna and Flora (CITES). The MIKE Programme is a site-based system designed to monitor trends in the illegal killing of elephants, build management capacity and provide information to help range States make appropriate management and enforcement decisions. MIKE evaluates relative poaching levels based on the Proportion of Illegally Killed Elephants (PIKE), which is calculated as the number of illegally killed elephants found divided by the total number of elephant carcasses encountered, aggregated by site and across year.
