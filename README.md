@@ -70,7 +70,6 @@ posterior samples from the continental or subregional fits. You likely will NOT 
 # Change Log
 
 #### *2023-07-15* 
-
 Code directory updated as required for and *README.md* file updated to include additional introductory text, and hyperlink to the MIKE report.
 
 #### *2022-05-25*
