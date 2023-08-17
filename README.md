@@ -2,10 +2,10 @@
 <p> <img src="images/UNCiteslogo.png" width="10%" height="100%" style="display: block; margin: auto auto auto 0;" align="top"/> <img src="images/MIKELogo.png" width="25%" height="100%" style="display: block; margin: auto auto auto 0;" align="botom"/>   </p>
 
 # MIKE-GLMM 2023 (unweighted model)
-PIKE TREND ANALYSIS 2003-2022,  USING A BAYESIAN GENERALISED LINEAR MIXED MODEL APPROACH IN R
+PIKE TREND ANALYSIS USING A BAYESIAN GENERALISED LINEAR MIXED MODEL APPROACH IN R
 
 CITES MIKE Programme
-August 2023
+August  2023
 
 This repository contains R script used to analyse data from the Monitoring the Illegal Killing of Elephants (MIKE) Programme to produce outputs for reports to the
 relevant meetings of the Convention for International Trade in Endangered Species of Wild Fauna and Flora (CITES). The MIKE Programme is a site-based system designed to monitor trends in the illegal killing of elephants, build management capacity and provide information to help range States make appropriate management and enforcement decisions. MIKE evaluates relative poaching levels based on the Proportion of Illegally Killed Elephants (PIKE), which is calculated as the number of illegally killed elephants found divided by the total number of elephant carcasses encountered, aggregated by site and across year.
@@ -14,15 +14,15 @@ The analytical approach documented <a href="https://github.com/CITESmike2020/MIK
 
 The Bayesian unweighted GLMM  approach was used to report PIKE trends in the MIKE report: <a href="https://cites.org/sites/default/files/MIKE/E-PIKE_Trend_Analysis_Aug2021.pdf"> Monitoring the Illegal Killing of Elephants (MIKE) PIKE trend analysis 2003-2020</a>, released by the CITES Secretariat in November 2021. <a href="https://github.com/CITESmike2020/GLMM-2021-unweighted-model"> The code used in the analysis is located here. </a>  A list of GitHub repositories for previous analysis can be found <a href= "https://cites.org/eng/prog/mike/index.php/portal#MIKE%20Analytical%20Code"> here </a>.
 
+The Bayesian GLMM (unweighted)  approach is used to report PIKE trends in the MIKE report: <i>Monitoring the Illegal Killing of Elephants (MIKE) PIKE trend analysis 2003-2021</i>, released by the CITES Secretariat in July 2022.  <a href="https://cites.org/sites/default/files/documents/COP/19/agenda/E-CoP19-66-05.pdf"> Click here to see the report.</a> 
 
-The Bayesian GLMM (unweighted)  approach is used to report PIKE trends in the MIKE report: <i>Monitoring the Illegal Killing of Elephants (MIKE) PIKE trend analysis 2003-2022</i>, released by the CITES Secretariat in September 2023 (change link when available).  <a href="https://cites.org/sites/default/files/documents/COP/19/agenda/E-CoP19-66-05.pdf"> Click here to see the report.</a> 
+The Bayesian GLMM (unweighted)  approach is used to report PIKE trends in the MIKE report: <i>Monitoring the Illegal Killing of Elephants (MIKE) PIKE trend analysis 2003-2022</i>, will be released by the CITES Secretariat in September 2023.  <a href="https://cites.org/sites/default/files/documents/COP/19/agenda/E-CoP19-66-05.pdf"> Click here to see the report.</a> 
 
-The code to generate the MIKE report is included in this GitHub repository.
+The code used to generate the latest MIKE report is included in this GitHub repository. 
 
 # MIKE - GLMM  (unweighted) Model for PIKE
 
-This GitHub sites contains code and reports to estimate yearly-trends in the Proportion of Illegally Killed Elephants (PIKE) based on data collected at
-MIKE (Monitoring Illegally Killed Elephants) monitoring sites in Africa and Asia since 2003.
+This GitHub sites contains code and reports to estimate yearly-trends in the Proportion of Illegally Killed Elephants (PIKE) based on data collected at MIKE (Monitoring Illegally Killed Elephants) monitoring sites in Africa and Asia since 2003.
 
 Briefly, MIKE data is collected on an annual basis in designated MIKE sites by law enforcement and ranger patrols in the field and through other means. When an elephant carcass is found, site personnel try to establish the cause of death and other details, such as sex and age of the animal, status of ivory, and stage of decomposition of the carcass. This information is recorded in standardized carcass forms, details of which are then submitted to the MIKE Programme. As expected, different sites report widely different numbers of carcasses, as encountered carcass numbers are a function of: population abundance; natural mortality rates; the detection probabilities of elephant carcasses in different habitats; differential carcass decay rates; levels of illegal killing; and levels of search effort and site coverage. 
 
@@ -68,6 +68,10 @@ posterior samples from the continental or subregional fits. You likely will NOT 
 -	To generate a slope analysis report, based on the posterior samples, open and knit the *Slope_Analysis.Rmd* document to create the html/pdf documents.
 
 # Change Log
+
+#### *2023-07-15* 
+
+Code directory updated as required for and *README.md* file updated to include additional introductory text, and hyperlink to the MIKE report.
 
 #### *2022-05-25*
 
