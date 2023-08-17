@@ -1,0 +1,1434 @@
+---
+title: "MIKE analysis for Africa - Technical Report"
+author: "MK - R code updated 14-March-2022"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  pdf_document:
+    keep_tex: false
+    number_sections: yes
+    toc: yes
+    fig_caption: true
+    extra_dependencies: ["float"]
+  html_document:
+    number_sections: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, echo=FALSE,message=FALSE, warning=FALSE, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+options(width=200)
+
+library(emmeans)
+library(ggplot2)
+library(ggforce)
+library(ggmap)
+library(ggrepel)
+library(gridExtra)
+library(HDInterval)
+library(kableExtra)
+library(knitr)
+library(plyr)
+library(reshape2)
+library(R2jags)
+library(rgdal)
+library(tidyverse)
+library(tidyxl)
+library(viridis)
+
+source("register_google_key.R")
+
+
+# load the fitting functions
+source("fitting-functions1-base-model.R")       # the base mode
+source("fitting-functions1-base-model-noSY.R")  # the base model with no site-year effects
+source("fitting-functions1-base-model-uncertain-pop.R")  # the base model with no site-year effects
+source("fitting-functions2.R")  # extraction and other functions
+
+# update source file name to read Africa data
+source("read.africa.data.update.R", echo=TRUE)
+
+logit<- function(p){log(p/(1-p))}
+expit<- function(theta){1/(1+exp(-theta))}
+
+n.last.years <- 5 # how many last years to use for trend?
+```
+
+\newpage
+
+# Introduction
+
+This document estimates yearly-trends in the Proportion of Illegally Killed Elephants (PIKE) from  MIKE (Monitoring Illegally Killed Elephants) monitoring sites in Africa since 2003.  The method used here was published in 2020 on a GitHub repository [CITESmike2020/MIKE-GLMM](https://github.com/CITESmike2020/MIKE-GLMM) with the computer code (written in R) and several accompanying technical reports. The original technical report, which this document is based on, can be viewed by [clicking here](https://github.com/CITESmike2020/MIKE-GLMM/blob/main/ReportsAndEstimates/2020-10-29-report.africa.technical.pdf).  
+
+
+The computer code from the [GIT hub repository](https://github.com/CITESmike2020/MIKE-GLMM) has been modified to estimate yearly PIKE trends from 2003-2021 using only the unweighted marginal mean PIKE model (MM.p.uw), which does not require elephant population abundance data at the site-year level. The pro and cons of this approach are discussed in more detail in the original technical document.  
+
+Briefly, MIKE data is collected on an annual basis in designated MIKE sites by law enforcement  and ranger patrols in the field and through other means.  When an elephant carcass is found, site personnel try to establish the cause of death and other details,  such as sex and age of the animal, status of ivory, and stage of decomposition of the carcass.  This information is recorded in standardized carcass forms, details of which are then submitted to the  MIKE Programme.  As expected, different sites report widely different numbers of carcasses,  as encountered carcass numbers are a function of: population abundance; natural mortality rates;  the detection probabilities of elephant carcasses in different habitats;  differential carcass decay rates;  levels of illegal killing; and levels of search effort and site coverage.  Because of these features of the survey data, the number of carcasses found is unlikely to be  proportional to the total mortality and trends in observed numbers of  illegally killed elephants may not be informative of the underlying trends.   Consequently, the observed proportion of illegally killed elephants (PIKE) as an index of  poaching levels has been used in the MIKE analysis in an attempt to account for  differences in patrol effort between sites and over time: $$PIKE_{sy}=\frac{\textit{Number of illegally killed elephants}_{sy}}{\textit{Total Carcasses Examined}_{sy}}$$
+where the subscripts $sy$ refer to site and year respectively.
+
+
+Computing a continent-wide PIKE is challenging for several reasons, including as mentioned above:
+
+- Detection probabilities of elephant carcasses in various habitats differ.
+- Levels of search effort and site coverage differ between sites.
+- Not all sites report in all years.
+- Number of carcasses in both categories varies considerably across space and time.
+
+# Exploration of PIKE data
+
+
+## MIKE sites with *PIKE* data
+
+There are `r sum(data.source$GIS)` MIKE sites that have reported data on the number of carcasses found and the number of illegally killed carcasses among these. This includes `r N.pike.site.years.0.carcasses` site-years where sites have reported 0 carcasses and  `r N.pike.site.years.with.carcasses` site-years where sites have reported one or more elephant carcasses. 
+
+The current analysis treats a site that did not detect and report any carcasses in a year due to no patrol effort and a site that did conduct patrols but did not detect any carcasses in a year in the same manner.  This is  because information on patrol effort is not currently used in the analysis and only the number of carcasses detected and examined,  and the number of illegally killed elephants in the sample of carcasses is used. In the latter case, 0 illegal carcasses out of 0 carcasses examined gives a *PIKE* for that site-year of 0/0 which is indeterminate and cannot be used in any mathematical analysis of *PIKE*.  The following plot shows that there are some sites that have reported data for  at least one carcass in as little as one year, but other sites have reported data for at least one carcass in almost every year.
+
+```{r echo=FALSE,message=FALSE,warning=FALSE}
+# Create a plot of which site measured in which year
+temp <- pike.original
+temp$Carcass.cat <- car::recode(temp$TotalNumberOfCarcasses,
+                            " 1:3 = '01-03';
+                              3:10= '03-10';
+                             11:20= '11-20';
+                             21:50= '21-50';
+                             51:hi= '51+';
+                            ")
+
+site.plot <- ggplot(data=temp, aes(x=year, y=MIKEsiteName, color=Carcass.cat))+
+  ggtitle(paste(UNRegion.select, ": When is each site measured",sep=""))+
+  geom_point()+
+  ylab("Site")+xlab("Year")+
+  facet_wrap(~SubregionName, ncol=2, nrow=2, scales='free_y')+
+  scale_color_viridis(discrete=TRUE, name='Number\nof\ncarcasses', direction=-1 )
+site.plot
+```
+
+In total, there are `r nrow(unique(pike[,c("year","MIKEsiteID")]))` unique site-years in `r UNRegion.select`  since `r min(pike$year)` where data has been reported (and the number of reported carcasses > 0).
+
+The number of carcasses reported in each site-year since `r min(pike$year)` varies enormously from `r min(pike$TotalNumberOfCarcasses)` to `r max(pike$TotalNumberOfCarcasses)` carcasses.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data=pike, aes(x=as.factor(year), y=TotalNumberOfCarcasses))+
+  ggtitle(paste(UNRegion.select,": Carcasses observed",sep=""))+
+  geom_point(position=position_jitter(width=0.2))+
+  geom_boxplot( alpha=0.2, outlier.size=0)+
+  facet_wrap(~SubregionName, ncol=2,scale="free")+
+  scale_x_discrete(breaks=seq(2000,2020,5))+
+  ylab("Total number of carcasses")+xlab("Year")
+```
+
+The unusual data point for West Africa where one site reported a large number of carcasses in one year is correct and corresponds  to the MIKE site Gourma (GOU) with total number of carcasses equal to  134, of which  130  were poached by armed groups who entered the area.
+
+## Observed *PIKE*
+
+The observed *PIKE* is the value computed from the examined carcasses in a year which we hope reflects the actual *PIKE* for all elephants at the MIKE site. A plot of the observed *PIKE* values from each site-year shows a wide range in the observed *PIKE* values,  but many of the observed *PIKE* values close to 0 or 1 occur in sites with only a small number of carcasses examined in a year: 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pike.boxplot <- ggplot(data=pike, aes(x=as.factor(year), 
+                                      y=NumberOfIllegalCarcasses/TotalNumberOfCarcasses) )+
+  ggtitle(paste(UNRegion.select,": Observed PIKE values",sep=""),
+          subtitle="Points jittered to prevent overplotting")+
+  #geom_point( position=position_jitter(height=0.2, width=0.2), size=TotalNumberOfCarcasses))+
+  geom_point( aes(size=TotalNumberOfCarcasses), position=position_jitter(width=0.2))+
+   geom_boxplot( alpha=0.2, outlier.size=0)+
+  facet_wrap(~SubregionName, ncol=2)+
+  scale_x_discrete(breaks=seq(2000,2050,5))+
+  scale_size_continuous(name="Total\ncarcasses\nin a\nyear", )+
+  xlab("Year")+ylab("Observed Pike")
+pike.boxplot
+```
+
+The trend in observed *PIKE* values for each site is:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# compute the total number of carcasses reported for each site.
+total.carcass <- plyr::ddply(pike,"MIKEsiteID", plyr::summarize, 
+                             total.c = sum(TotalNumberOfCarcasses))
+plotdata <- merge(pike, total.carcass)
+
+plyr::l_ply(unique(pike$SubregionName), function(SubregionName, pike){
+  # select the data for this subregion
+  #browser()
+  pike <- pike[ pike$SubregionName == SubregionName,]
+  pike$pike <- pike$NumberOfIllegalCarcasses/pike$TotalNumberOfCarcasses
+  myplot <- ggplot(data=pike, aes(x=year, y=pike, color=MIKEsiteID))+
+   ggtitle(paste(UNRegion.select,": Observed PIKE values for each site"),
+           subtitle="Thicker/darker lines represent sites with more carcasses reported")+
+   geom_line(alpha= .2+ pike$total.c/max(pike$total.c)*.8,
+             size = .2+ pike$total.c/max(pike$total.c)*1.3 )+
+   facet_wrap(~SubregionName, ncol=1,nrow=1)+
+   scale_color_discrete(name="MIKE\nsite\nID")+
+   xlab("Year")+ylab("Observed PIKE")+ylim(0,1)
+  plot(myplot)
+}, pike=plotdata)
+```
+
+Note that with a small number of carcasses reported (e.g. 0 or 1) it is quite common  for the reported *PIKE* to be 0 or 1 because either none or all of the carcasses have  been illegally killed. Consequently, the trends are difficult to interpret for many sites with only a few carcasses reported.
+
+## Final dataset used
+
+The final data set consists of `r length(unique(pike$MIKEsiteID))` MIKE sites from
+`r min(pike$year)` to `r max(pike$year)` over the subregions as shown below:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+temp <- plyr::ddply(pike,"SubregionName", function(x){
+   Site.Year =nrow(x)
+   n.sites   =length(unique(x$MIKEsiteID))
+   u.sites   = sort(unique(x$MIKEsiteID))
+   mean.carcass= round(mean(x$TotalNumberOfCarcasses, na.rm=TRUE),1)
+   sites     = paste(u.sites, collapse=", ")
+   data.frame(n.sites, Site.Year,  mean.carcass,sites)
+})
+kable(temp, 
+      caption="Summary of MIKE sites used in analysis",
+      col.names=c("Subregion Name","Number of sites","# Site-Years ","Mean # carcasses reported per year","Site IDs"),
+      digits=c(NA,0,0,1,NA))  %>% 
+      column_spec(column=c(1),         width="3cm") %>%
+      column_spec(column=c(2,3,4),     width="2cm") %>%
+      column_spec(column=5,            width="5cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+```
+
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(plotdata, pike.boxplot, site.plot, temp, select)
+rm(total.carcass)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+
+# The Bayesian model
+## Binomial variation within each site-year
+
+In each site-year, the number of illegally killed elephant carcasses is a fraction of the  total elephant carcasses examined. Consequently, we use a binomial distribution  to model this part of the data:
+
+$$IC_{sy} \sim Binomial(TC_{sy}, \pi_{sy})$$
+where 
+$IC_{sy}$ is the number of illegally killed carcasses reported from site $s$ in year $y$;
+$TC_{sy}$ is the total number of carcasses located as reported from site $s$ in year $y$;
+and $\pi_{sy}$ is the probability that a reported carcass was defined as illegally killed in site $s$ in year $y$.
+
+## Temporal and site effects
+
+The value of $\pi_{sy}$ (the *PIKE* in site $s$ and year $y$) varies by time (temporal trends), by site (site effects) and over time within each site (site-year effects).  
+
+Because, the *PIKE* must be between 0 and 1, it is modelled on the logistic scale.  Similar to (but not exactly the same as) Burn, Underwood and Blanc (2011), a Bayesian hierarchical model is adopted of the form:
+$$logit(\pi_{sy})= Year_y + Site_s(R) + SiteYear_{sy}(R)$$
+where $Year_y$ is the effect of year $y$ on the $logit(PIKE)$; $Site_s(R)$ is the (random) effect of site $s$ on the $logit(PIKE)$; and  $SiteYear_{sy}(R)$ is the (random) effect of site $s$ in year $y$ on the $logit(PIKE)$.
+
+Here $year$ is not modelled in a hierarchical fashion because we are interested in these particular years and do not believe that these years represent a  (theoretical) sample from all possible years.
+
+The random effects of site and site-year are modelled using a hierarchical model, i.e.
+$$Site_s \sim Normal(0, \sigma_{site})$$ and
+$$SiteYear_{sy} \sim Normal(0, \sigma_{site.year})$$
+
+Here the $Year_y$ effects represents the average $logit(PIKE)$ over all sites giving each site an equal weight.
+
+## Marginal mean *PIKE*
+
+Once the model is fit, the estimated $logit(PIKE)$ for all sites and years where no data are collected is found as:
+$$\widehat{logit(\pi_{sy})}= \widehat{Year}_y + \widehat{Site}_s + \widehat{SiteYear}_{sy}$$
+Note that if no data are collected in a particular site-year, the estimated *PIKE* is based purely  on the estimated value from other years. Because all $Site.Year$ effects are assumed to be independent among and within sites, so their values must be simulated from the posterior distribution.
+
+Once the estimated site-year values are obtained, the marginal means are found in two ways:
+
+1. The marginal mean on the *logit* scale
+$$MM_y^{logit} = \frac{\sum_s {\widehat{logit(\pi_{sy})} }}{s}$$
+where $s$ is the number of sites. 
+
+This marginal mean can also be interpreted as the $logit(PIKE)$ when the $Site$ and $Site.Year$ effects are zero, i.e. for an ``average site''. 
+
+This marginal mean can be back transformed to the [0,1] scale. Because the $logit()$ scale is a non-linear transformation of the [0,1] scale, this (default) method of computing a marginal mean is greatly influenced by $logit()$ values from *PIKE* that are close  to 0 or 1, i.e., $logit(0)=-\infty$ and $logit(1)=+\infty$. Consequently, this marginal mean is **not recommended** for use.
+
+2. The marginal mean on the probability (i.e. the 0-1) scale
+$$MM_y^{unweighted} = \frac{\sum_s{\widehat{\pi}_{sy}}}{s}$$
+This is closest to the marginal means computed in the prior analysis (the *LSMeans* approach) and is the recommended approach for computing the unweighted marginal mean.
+
+
+## Uncertainty about marginal mean *PIKE*
+
+There are three sources of uncertainty that need to be considered when estimating the uncertainty about the marginal mean *PIKE*:
+
+- choice of MIKE sites
+- imputation of missing *PIKE* in year.sites where no data is collected
+- estimation of *PIKE* in a year.site when only a small number of carcasses is measured.
+
+If you believe that MIKE sites were chosen at random from a larger population of MIKE sites  and you need to account for this initial selection of sites, then all three sources of uncertainty need to be incorporated into the estimates.
+
+However, MIKE sites were selected to be representative of most major populations of elephants and the notion of a new sample of MIKE sites may not be realistic. In this case, the MIKE sites are ``fixed'' and only the last two elements of uncertainty need to be incorporated.
+
+The differences between these two interpretations can be made clearer if asked what uncertainty should be reported if all MIKES reported in all years and had perfect information, i.e. the mortality of every single mortality in the associated population is known. If you believe that the current MIKE sites are a random sample from many potential MIKE sites, then there is sampling uncertainty associated with the marginal mean. If you believe that the current set of MIKE sites is fixed and representative, then  marginal mean PIKE would then have an uncertainty of 0.
+
+This issue is explored in more detail in Appendix 2 in the original technical document.
+
+It turns out that finding the uncertainty when MIKE sites are treated as "fixed" is automatically provided by the Bayesian analysis and no further computations are needed.
+
+If the MIKE sites are to be treated as a random sample of sites taken from a larger population of MIKE sites, then the Bayesian uncertainty associated with the *Year.eff* term on the logit scale automatically incorporates all three sources of uncertainty. However, as noted previously and later in the document, you cannot simple take the anti-logit of the *Year.eff* to get the marginal mean *PIKE* on the [0,1] scale with the proper accounting of uncertainty because of the transformation bias induced by the anti-logit transform.
+
+We derived the uncertainty of the marginal mean *PIKE* on the [0,1] scale  accounting for a random sample of sites and correcting for the transformation bias, by using  Bayesian Bootstrapping (Rubin, 1981;  https://stats.stackexchange.com/questions/181350/bootstrapping-vs-bayesian-bootstrapping-conceptually). For each sample from the posterior, the year.site values for *PIKE* on the logit scale  (accounting for uncertainty from a sample of carcasses and imputation for missing year.site values), are converted to the [0,1] scale.  A sample of weights is generated from a Dirichlet distribution with prior weights all set to 1.  The sample of weights are then used to compute a weighted average of the year.site values on the [0,1] scale. 
+
+More formally,
+$$\textbf{w}\sim Dirichlet(1,1,1,....1_{Nsites})$$
+$$MM_y^{BB,unweighted} = \sum_s{w_i \times \widehat{\pi}_{sy}}$$
+The posterior distribution of the Bayesian bootstrap estimator will then account for all sources of uncertainty.
+
+
+# Continential trends in *PIKE*
+
+```{r echo=FALSE,warning=FALSE,message=FALSE,results="hide"}
+
+all.fit <- fit.pike(pike, mike.pop.est,
+                     seed=234234
+                     )
+ save("all.fit", file="report-africa-continental-fit.RData")
+
+```
+
+The above model was coded using *BUGS* (Lunn et al, 2012), a common way to specify Bayesian  models and run using *JAGS* (Plummer, 2003) within $R$ (R Core Team, 2020).
+
+Vague priors were specified for the year effects, and conjugate prior specified for the variance components of the $site$ and $site.year$ effects.
+
+The model was run for `r all.fit$results$BUGSoutput$n.iter` iterations  with the first `r all.fit$results$BUGSoutput$n.burnin` iterations discarded as burnin and the MCMC samples thinned by a factor of `r all.fit$results$BUGSoutput$n.thin`.  Multiple independent chains (`r all.fit$results$BUGSoutput$n.chains`)  were run and `r all.fit$results$BUGSoutput$n.keep` samples from the posterior samples were retained from each chain. A total of `r all.fit$results$BUGSoutput$n.sims` samples from the posterior  from all chains were retained.
+
+## Estimates of site and year.site variance components
+
+The estimated variance components (on the *logit* scale are):
+
+```{r echo=FALSE}
+var.comp <- extract.effect(all.fit, "^sd", index.type="none")
+kable(var.comp[,-ncol(var.comp)], 
+      caption="Estimated standard dev of Site and Year.Site effects",
+      col.names=c("Mean ","SD ","Lower ","Upper ","Rhat ","Eff n "),
+      digits=c(2,2,2,2,3,0))  %>% 
+      add_header_above(c(" " = 1, " "=2, "95% CI" = 2, " " = 1, " " = 1)) %>%
+      column_spec(column=c(1),       width="2cm") %>%
+      column_spec(column=c(2,3,6,7), width="1cm") %>%
+      column_spec(column=4:5,        width="1.5cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+```
+
+The variation in *PIKE* across sites is larger than within site-years (as expected). This indicates that the
+*PIKE* varies more across sites, than the *PIKE* varies within a site (across years)
+
+
+## Estimates of year effects and marginal means on the (*logit* scale)
+
+The estimated year effects (on the *logit* scale) are:
+
+```{r echo=FALSE}
+Year.eff    <- extract.effect(all.fit,   effect.name="^Year.eff\\[",    index.type="year", source="Direct")
+
+#Year.eff
+kable(Year.eff[,c("year.index","year","mean","sd","X2.5.","X97.5.")], 
+      caption="Estimated year effects on the logit scale",
+      col.names=c("Year index","Year","Mean ","SD ","Lower ","Upper "),
+      digits=c(0,0,2,2,2,2))  %>% 
+      add_header_above(c(" "=1, " "=1, " "=1," "=1, "95% CI" = 2)) %>%
+      column_spec(column=c(1,2,3,4), width="1cm") %>%
+      column_spec(column=5:6,          width="1.5cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+```
+
+The year effects are the $logit(PIKE)$ for an ``average site'' in each year or
+for the average $logit(PIKE)$ over a random sample of sites (refer to the appendices for
+more details). The SD for this term depends on the variance components seen earlier 
+and the number of sites and is only weakly dependent on the number of carcasses measured
+each year and the number of imputed values in a year.
+
+This is contrasted to the  marginal means on the *logit* scale, i.e. the marginal mean $logit(PIKE)$ is computed
+in each year over sites that have data or sites with imputed site.years:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Year.est.MM    <- extract.effect(all.fit,  effect.name="^Year.est.MM\\[",    index.type="year", source="MM")
+#Year.est.MM
+kable(Year.est.MM[,c("year.index","year","mean","sd","X2.5.","X97.5.")], 
+      caption="Estimated marginal means on the logit scale",
+      col.names=c("Year index","Year","Mean ","SD ","Lower ","Upper "),
+      digits=c(0,0,2,2,2,2))  %>% 
+      add_header_above(c(" "=1, " "=1, " "=1," "=1, "95% CI" = 2)) %>%
+      column_spec(column=c(1,2,3,4), width="1cm") %>%
+      column_spec(column=5:6,          width="1.5cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+
+```
+
+If these two values are plotted against each other for each year, they are very close 
+(as expected and explained in the appendices in the original document):
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# plot the two estimates against each other
+plotdata <- rbind(Year.eff, Year.est.MM)
+plotdata <- reshape2::dcast(plotdata, year~Source, value.var="mean")
+#plotdata
+ggplot(data=plotdata, aes(x=Direct, y=MM))+
+  ggtitle("Comparison of direct estimate of year effect and computed marginal mean \n on logit scale")+
+  geom_point()+
+  geom_abline(intercept=0, slope=1)+
+  xlab("Direct estimate of year effect from Bayesian model")+
+  ylab("Computed unweighted marginal mean after model is fit")
+
+```
+
+The standard deviation for the *Year.eff* can be interpreted as closest to the standard error of a mean, i.e.
+how uncertain are you about the mean $logit(PIKE)$ if you are willing to assume that the sites are a random sample
+from all possible sites etc. The standard deviation for the marginal mean $logit(PIKE)$ treats the sites chosen
+as a fixed index to all sites and so the concept of a random sample of sites has no meaning. The mean $logit(PIKE)$
+is also an index to the overall *PIKE* and uncertainty in this index is driven by the uncertainty in the individual
+site-year observed $PIKE$, i.e. by the number of carcasses monitored and the uncertainty in the imputation 
+for site.years that are missing (see appendices for details)
+
+## Estimates of year effects and marginal means on the [0,1] scale
+
+However, interest lies on the marginal mean *PIKE* on the [0,1] scale rather than the logit scale.
+
+There are three possible estimates of these marginal mean *PIKE*:
+
+- The anti-logit of the *Year* effect which was originally estimated on the logit scale.
+- The marginal mean of the anti-logit of the boot-strapped site-year estimates
+- The marginal mean of the anti-logit of the estimated site-year *logit(PIKE)* for these sites.
+
+
+```{r echo=FALSE}
+YearP.eff         <- extract.effect(all.fit,  effect.name="^YearP.eff\\[",    index.type="year", source="anti-logit Year eff")
+YearP.est.MM.boot <- extract.effect(all.fit,  effect.name="^YearP.est.MM.boot\\[", index.type="year", source="bootstrap MM.p.uw")
+YearP.est.MM <-      extract.effect(all.fit,  effect.name="^YearP.est.MM\\[",      index.type="year", source="MM.p.uw")
+
+temp <- merge(      plyr::rename(YearP.eff        [,c("year.index","year","mean","sd")], c("mean"="mean1", "sd"="sd1")),
+                    plyr::rename(YearP.est.MM.boot[,c("year.index","year","mean","sd")], c("mean"="mean2", "sd"="sd2")))
+temp <- merge(temp, plyr::rename(YearP.est.MM     [,c("year.index","year","mean","sd")], c("mean"="mean3", "sd"="sd3")))
+temp <- temp[ order(temp$year),]
+
+kable(temp[,c("year","mean1","sd1","mean2","sd2","mean3","sd3")], row.names=FALSE, 
+      caption="Comparison of marginal mean PIKE on [0,1] scale",
+      col.names=c("Year","Mean ","SD ","Mean ","SD ","Mean ","SD "),
+      digits=c(0,2,3,2,3,2,3))  %>% 
+      add_header_above(c(" "=1, "anti-logit Year effect "=2, "mean antilogit Bootstrap "=2,"mean antilogit year.site "=2)) %>%
+      column_spec(column=c(1,2,3,4,5,6,7), width="1cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+```
+
+Notice that the estimated marginal mean *PIKE* of the last two methods are the same but the standard deviations
+differ.
+
+The first estimate computed from the anti-logit of the year effect from the model is unsatisfactory
+because of the back-transformation bias. For example, consider three sites in one particular year:
+
+* Site A. $\textit{PIKE}=0.9$ or $logit(\textit{PIKE}) = 2.20$.
+* Site B. $\textit{PIKE}=0.8$ or $logit(\textit{PIKE}) = 1.38$.
+* Site C. $\textit{PIKE}=0.7$ or $logit(\textit{PIKE}) = 0.84$.
+
+The year effect is estimated as the mean of the logit values
+$$\textit{Year effect}=\frac{2.20+1.38+0.84}{3}=1.48$$
+and $\textit{anit-logit}(1.48)=0.82$ which is larger than the mean *PIKE* of 0.8.
+
+
+As noted previously, the transformation from the *logit* scale to the  probability scale is not linear, and so back transformation of the mean *PIKE* over sites in a year on the *logit* scale is not equal to the mean of the back transformed *PIKE* for a site in a year to the [0,1] scale. The transformation bias is positive if the mean *PIKE* is more than 0.5 and negative if the mean *PIKE* is less than 0.5.
+
+The transformation bias (i.e., the anti-logit of the mean of the year-site estimates on the logit scale, vs. the mean of the anti-logit of the year-site estimates in a year) is shown in the following plot:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+temp1 <- plyr::rename(YearP.eff   [,c("year","mean")], c("mean"="AL.mean"))
+temp2 <- plyr::rename(YearP.est.MM[,c("year","mean")], c("mean"="mean.AL"))
+plotdata <- merge(temp1, temp2)
+ggplot(data=plotdata, aes(x=mean.AL, y=AL.mean))+
+  ggtitle("Transformation bias ")+
+  geom_point()+
+  geom_abline(intercept=0, slope=1)+
+  geom_text_repel(aes(label=year))+
+  xlab("PIKE computed using anti-logit of year.site effects \n followed by a the marginal mean on the [0,1] scale")+
+  ylab("PIKE computed using anti-logit of year effects \n which is the marginal mean on the logit scale")+
+  ylim(0,1)
+
+```
+
+As expected (see earlier sections), a negative bias exists when the marginal mean on the logit-scale is back-transformed to the [0,1] scale when the *PIKE* is $< 0.5$ and a positive bias when the *PIKE* is $> 0.5$. This is why we first back transform to the [0,] scale before finding the  marginal mean. 
+
+If we plot the trends over time:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+plotdata <- plyr::rbind.fill(YearP.eff,  
+                             YearP.est.MM)
+
+ggplot(data=plotdata, aes(x=year, y=mean, color=Source))+
+  ggtitle(paste(UNRegion.select,": Estimated PIKE across time",sep=""),
+          subtitle="Comparison of marginal mean first computed on the logit scale and back transformed\nvs. back transforming each site PIKE first")+
+  geom_point( position=position_dodge(width=0.2))+
+  geom_line(position=position_dodge(width=0.2))+
+  geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.2, position=position_dodge(width=0.2))+
+  ylim(0,1)+
+  ylab("Estimated PIKE (95% credible interval)")+
+  theme(legend.position=c(0,0), legend.justification=c(0,0))
+
+
+```
+
+we see that when *PIKE* is $>0.5$, the marginal mean computed on the *logit* scale and then back transformed ($MM.logit$) is consistently larger than the marginal means first computed by back-transforming the *PIKE* value for each year.site and then finding the marginal mean ($MM.p.uw$) and vice versa when *PIKE* is $< 0.5$. This is an artefact of the non-linear transformation from the *logit* scale to the [0, 1] scale.  **Consequently, it is recommended that the estimated *PIKE* for each year.site be first back-transformed before computing marginal means.** 
+
+We corrected for this transformation bias by first converting the site.year estimates of *logit(PIKE)* to the *PIKE* for each year, and then taking the average (last two sets of columns in the first table of  this section). These last two estimates are plotted over time:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+plotdata <- plyr::rbind.fill( YearP.est.MM, YearP.est.MM.boot)
+
+ggplot(data=plotdata, aes(x=year, y=mean, color=Source))+
+  ggtitle(paste(UNRegion.select,": Estimated PIKE across time",sep=""),
+          subtitle="Comparison of marginal means computed on the [0,1] scale")+
+  geom_point( position=position_dodge(width=0.2))+
+  geom_line(position=position_dodge(width=0.2))+
+  geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.2, position=position_dodge(width=0.2))+
+  ylim(0,1)+
+  ylab("Estimated PIKE (95% credible interval)")+
+  theme(legend.position=c(0,0), legend.justification=c(0,0))
+
+
+```
+
+We see that they are identical (as they must be) but the uncertainty is larger in the bootstrapped marginal mean. This is because the uncertainty relates to how we interpret the marginal mean *PIKE*. 
+
+If we believe that MIKE sites are a true random sample from all sites with elephant populations and want to account for uncertainty in the continental mean due to  the random sampling of sites, the uncertainty in *PIKE* in individual site.year, and the imputation process, then the  uncertainty attached to the bootstrap marginal mean *PIKE* should be used. Even if every MIKE site had perfect information (e.g. every elephant mortality found and carcass status known with no missing values), there would still be uncertainty associated with the random sample of MIKE sites. This uncertainty is closest in spirit to the  uncertainty reported from a random sample of numbers, i.e. the mean and standard error of the mean.
+
+However, MIKE sites are not randomly selected but were purposely selected to be "representative" of the  various elephant populations, then other MIKE sites that could have been selected are not relevant. Sites are treated as being fixed, and the only uncertainty of interest is due to a small sample of carcasses being monitored in each site-year and missing site-years. If every site has perfect information, the uncertainty of
+the *MM.p.uw* would be zero. 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+YearP.est.MMw      <- extract.effect(all.fit,  effect.name="^YearP.est.MMw\\[", index.type="year", source="MM.p.w")
+YearP.est.MMw.boot <- extract.effect(all.fit,  effect.name="^YearP.est.MMw.boot\\[", index.type="year", source="Bootstrap MM.p.w")
+
+temp <- merge(      plyr::rename(YearP.est.MMw.boot[,c("year.index","year","mean","sd")], c("mean"="mean1", "sd"="sd1")),
+                    plyr::rename(YearP.est.MMw     [,c("year.index","year","mean","sd")], c("mean"="mean2", "sd"="sd2")))
+temp <- temp[ order(temp$year),]
+
+kable(temp[,c("year","mean1","sd1","mean2","sd2")], row.names=FALSE,
+      caption="Comparison of marginal weighted mean PIKE on [0,1] scale",
+      col.names=c("Year","Mean ","SD ","Mean ","SD "),
+      digits=c(0,2,3,2,3))  %>%
+      add_header_above(c(" "=1, "Bootstrapped marginal weighted PIKE"=2, "Marginal weighted PIKE"=2)) %>%
+      column_spec(column=c(1,2,3,4,5), width="1cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, include = FALSE} 
+plotdata <- plyr::rbind.fill( YearP.est.MMw, YearP.est.MMw.boot)
+plotdata$X2.5.  <- pmax(0, pmin(1, plotdata$X2.5.))
+plotdata$X97.5. <- pmax(0, pmin(1, plotdata$X97.5.))
+
+ggplot(data=plotdata, aes(x=year, y=mean, color=Source))+
+  ggtitle(paste(UNRegion.select,": Estimated PIKE across time",sep=""),
+          subtitle="Comparison of marginal weighted means computed on the [0,1] scale")+
+  geom_point( position=position_dodge(width=0.2))+
+  geom_line(position=position_dodge(width=0.2))+
+  geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.2, position=position_dodge(width=0.2))+
+  ylim(0,1)+
+  ylab("Estimated PIKE (95% credible interval)")+
+  theme(legend.position=c(0,0), legend.justification=c(0,0))
+```
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, include =FALSE}
+# create a plot of the year effects over time
+
+raw.pike <- plyr::ddply(pike,"year", plyr::summarize,
+                        mean=sum(NumberOfIllegalCarcasses)/sum(TotalNumberOfCarcasses))
+raw.pike$Source <- "Observed"
+
+# add the year index to the pike and lsmeans data
+raw.pike <- merge(raw.pike, all.fit$year.index)
+
+plotdata <- plyr::rbind.fill(YearP.eff,  
+                             YearP.est.MM, 
+                             YearP.est.MMw, 
+                             raw.pike) 
+
+ggplot(data=plotdata[ plotdata$Source %in% c("Observed","MM.p.uw"),], aes(x=year, y=mean, color=Source))+
+  ggtitle(paste(UNRegion.select,": Estimated PIKE across time",sep=""),
+          subtitle="Comparison of unweighted marginal means and observed PIKE")+
+  geom_point( position=position_dodge(width=0.2))+
+  geom_line(position=position_dodge(width=0.2))+
+  geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.2, position=position_dodge(width=0.2))+
+  ylim(0,1)+
+  ylab("Estimated PIKE (95% credible interval)")+
+  theme(legend.position=c(0,1), legend.justification=c(0,1))
+
+# save the plotting data with information at the continential level
+save.plotdata <- plotdata 
+save.plotdata$Region = "Africa"
+```
+
+## Posterior belief of trend in *PIKE* in last few years
+
+```{r include=FALSE,echo=FALSE, warning=FALSE, message=FALSE}
+# Estimate the posterior probability that the trend in the last five years is negative.
+# Extract the posterior sample for the margina mean (unweighted) for the last five years
+yearP.eff.post.long1 <- extract.posterior(all.fit, "^YearP.est.MM\\[",  index.type="year", source="MM.p.uw" )
+yearP.eff.post.long2 <- extract.posterior(all.fit, "^YearP.est.MMw\\[", index.type="year", source="MM.p.w"  )
+
+yearP.eff.post.long <- rbind(yearP.eff.post.long1, yearP.eff.post.long2)
+yearP.eff.post.long  <- yearP.eff.post.long1
+
+
+# select the last five years
+last.years <- sort(unique(pike$year),decreasing=TRUE)[1:n.last.years]
+yearP.eff.post.long <- yearP.eff.post.long[ yearP.eff.post.long$year %in% last.years, ]
+
+# compute the slope in pike in the last five years for each sample from the posterior
+yearP.eff.slope <- plyr::ddply(yearP.eff.post.long, c("Source","sim"), function(x){
+    fit <- lm( value ~ year, data=x)
+    slope <- coef(fit)[2]
+    slope.neg <- slope < 0
+    data.frame(intercept=coef(fit)[1], slope=slope, slope.neg=slope.neg)
+})
+head(yearP.eff.slope)
+```
+
+Once the sample from the posterior is available, it is relatively easy to estimate the posterior belief that the trend is negative in the last `r n.last.years` years. This is done by estimating the slope in the last `r n.last.years` years for each sample from the posterior, and then the posterior belief that the trend is negative is the proportion  of fitted slopes that are less than zero. The posterior distribution of the slope in the last `r n.last.years` years is shown in the graph below.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+post.belief.slope.negative <- plyr::ddply(yearP.eff.slope, "Source", plyr::summarize, 
+                                        p.slope.neg = mean(slope.neg))
+post.belief.slope.negative$p.slope.neg <- formatC(post.belief.slope.negative$p.slope.neg, digits=5, format='f')
+
+
+slope.post <- ggplot(data=yearP.eff.slope, aes(x=slope, y=..density..))+
+  ggtitle(paste0(UNRegion.select,": Posterior distribution of slope in fitted yearly PIKE in last ",n.last.years," years"),
+          subtitle="Based on marginal mean PIKE")+
+  geom_histogram( alpha=0.2)+
+  geom_vline(xintercept=0)+
+  geom_text(data=post.belief.slope.negative, 
+            label=paste("Post belief that slope is < 0 is ", post.belief.slope.negative$p.slope.neg,sep=""),
+            aes(x=Inf, y=Inf), hjust=1, vjust=1)+
+  xlab(paste0("Slope in estimated PIKE in last ", n.last.years," years"))+
+  ylab("Density")+
+  facet_wrap(~Source, ncol=2)
+slope.post
+```
+
+
+In this case, the posterior belief that the slope in PIKE is negative in the last `r n.last.years` is given in  top right corner of the graph. 
+
+The trend for each subregion is shown below, where the shaded area is the envelope of posterior trends. 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Weighted marginal mean
+pike1  <- as.data.frame(extract.effect(all.fit,  effect.name="^YearP.est.MM\\[",  index.type="year", source="MM.p.uw"))
+pike2  <- as.data.frame(extract.effect(all.fit,  effect.name="^YearP.est.MMw\\[", index.type="year", source="MM.p.w"))
+all.pike <- rbind(pike1, pike2)
+all.pike  <- pike1
+# Find the average slope
+avg.slope <- plyr::ddply(yearP.eff.slope, "Source", plyr::summarize,
+                         intercept=mean(intercept),
+                         slope    =mean(slope))
+fitted.avg.slope <- plyr::ddply(avg.slope, "Source", function(x){
+       data.frame(year=last.years, pike=x$intercept + x$slope*last.years)
+})
+  
+post.fitted.line <- plyr::ddply(yearP.eff.slope, c("Source","sim"), function(x){
+      data.frame(year=last.years, pike=x$intercept + x$slope*last.years)
+})
+
+ggplot(data=all.pike, aes(x=year, y=mean))+
+  ggtitle(paste0(UNRegion.select,": Trend in PIKE in last ", n.last.years, " years"),
+          subtitle="Shaded area is the envelope of posterior trends")+
+  geom_line(data=post.fitted.line, aes(y=pike, group=sim), size=.1, color="blue", alpha=0.05)+
+  geom_line(data=fitted.avg.slope, aes(y=pike), size=2,    color="red", alpha=0.5)+
+  geom_line()+
+  geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.1)+
+  geom_text(data=post.belief.slope.negative, 
+            label=paste("Post belief that slope is < 0 is ", post.belief.slope.negative$p.slope.neg,sep=""),
+            aes(x=Inf, y=Inf), hjust=1, vjust=1)+
+  facet_wrap(~Source, ncol=1)+
+  xlab("Year")+ylab("PIKE (95% ci)")+ylim(0,1)
+```
+
+There is a strong posterior belief that the trend in the last `r n.last.years` years is negative, i.e. the *PIKE* is declining in the last `r n.last.years` years.
+
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(slope.post, post.belief.slope.negative,last.years, pike1, pike2, all.pike)
+rm(yearP.eff.slope, yearP.eff.post.long,post.fitted.line)
+
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+
+
+# Subregional trends in *PIKE*
+
+The above analyses were repeated at the sub-regional level. Only the data from each sub-region was used in each analysis, i.e., completely separate analyses were performed for each sub-region. 
+
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results="hide"}
+# set up individual seeds for subregion fit
+set.seed(2343243)
+subregion.seed <- data.frame(SubregionName=unique(pike$SubregionName))
+subregion.seed$seed <- round(runif(nrow(subregion.seed),min=1, max=1000000000))
+
+reg.fit <- plyr::llply( unique(pike$SubregionName), function(subregion, pike, mike.pop.est, subregion.seed){
+   # restrict the PIKE and pop est and seed to this subregion
+  pike           <- pike           [ pike          $SubregionName == subregion,] 
+  mike.pop.est   <- mike.pop.est   [ mike.pop.est  $SubregionName == subregion,]
+  subregion.seed <- subregion.seed [ subregion.seed$SubregionName == subregion,]
+  fit <- fit.pike(pike=pike, mike.pop.est=mike.pop.est, seed=subregion.seed$seed)
+  fit
+}, pike=pike, mike.pop.est=mike.pop.est, subregion.seed=subregion.seed)
+save("reg.fit", file="report-africa-subregional-fit.RData")
+
+
+# Get the various sources to plot
+reg.raw.pike <- plyr::ddply(pike,c("SubregionName","year"), plyr::summarize,
+                        mean=sum(NumberOfIllegalCarcasses)/sum(TotalNumberOfCarcasses))
+reg.raw.pike$Source <- "Observed"
+reg.raw.pike <- merge(reg.raw.pike, all.fit$year.index) #add the year index
+
+# marginal mean on [0,1] scale
+reg.YearP.eff <- plyr::ldply(reg.fit, function(x){
+   effect    <- extract.effect(x,  effect.name="^YearP.eff\\[",    index.type="year", source="MM.logit")
+   effect$SubregionName = x$pike$SubregionName[1]
+   effect
+})
+
+# The unweighted marginal mean of the *PIKE* computed on the [0,1] scale is:
+reg.YearP.est.MM <- plyr::ldply(reg.fit, function(x){
+  effect <- extract.effect(x,  effect.name="^YearP.est.MM\\[", index.type="year", source="MM.p.uw")
+   effect$SubregionName = x$pike$SubregionName[1]
+   effect
+})
+
+#F the weighted marginal mean of the *PIKE* computed on the [0,1] scale is:
+reg.YearP.est.MMw <- plyr::ldply(reg.fit, function(x){
+   effect <- extract.effect(x,  effect.name="^YearP.est.MMw\\[", index.type="year", source="MM.p.w")
+   effect$SubregionName = x$pike$SubregionName[1]
+   effect
+})
+
+```
+
+The following plots show the unweighted marginal *PIKE* values for the four sub-regions:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, results="hide"}
+reg.plotdata <- plyr::rbind.fill(reg.YearP.est.MM)  
+
+
+reg.plotdata$X2.5.  <- pmax(0, pmin(1, reg.plotdata$X2.5.))
+reg.plotdata$X97.5. <- pmax(0, pmin(1, reg.plotdata$X97.5.))
+
+plyr::l_ply(1:length(unique(reg.plotdata$SubregionName)), function(page){
+  reg.plot <- ggplot(data=reg.plotdata[], 
+                     aes(x=year, y=mean, color=Source))+
+     ggtitle(paste(UNRegion.select,": Estimated subregional PIKE across time",sep=""))+
+     geom_point( position=position_dodge(width=0.2))+
+     geom_line(position=position_dodge(width=0.2))+
+     geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.2,     position=position_dodge(width=0.2))+
+     coord_cartesian(ylim=c(0,1))+
+     ylab("Estimated PIKE (95% credible interval)")+xlab("Year")+
+     theme(legend.position=c(0,1), legend.justification=c(0,1), legend.background=element_blank(),legend.key=element_blank())+
+     facet_wrap_paginate(~SubregionName, ncol=1, nrow=1, page=page)
+  plot(reg.plot)
+})
+
+```
+
+It is interesting to compare the regional trends with the continental trends (shown in black):
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+cont.plotdata <-  plyr::rbind.fill( 
+                             YearP.est.MM, 
+                             YearP.est.MMw)
+cont.plotdata$SubregionName = " Continental"
+cont.plotdata$size          = 2
+cont.plotdata$color         ="black"
+
+reg.plotdata$X2.5.  <- pmax(0, pmin(1, reg.plotdata$X2.5.))
+reg.plotdata$X97.5. <- pmax(0, pmin(1, reg.plotdata$X97.5.))
+
+
+gg <- ggplot(data=filter(reg.plotdata, Source=="MM.p.uw"), aes(x=year, y=mean, color=SubregionName))+
+     ggtitle(paste(UNRegion.select,": Estimated subregional PIKE across time",sep=""),
+             subtitle="Continental trend shown in black")+
+     geom_point( position=position_dodge(width=0.2))+
+     geom_line(position=position_dodge(width=0.2))+
+     geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.2, position=position_dodge(width=0.2))+
+     coord_cartesian(ylim=c(0,1)) +
+     ylab("Estimated PIKE (95% credible interval)")+xlab("Year")+
+     facet_wrap(~Source) +
+    geom_line(data=filter(cont.plotdata, Source=="MM.p.uw"), aes(x=year, y=mean), color="black", size=2)
+
+plot(gg)
+
+# save the regional file for latter plotting
+
+save.plotdata2 <- plyr::rbind.fill(save.plotdata,
+                                  plyr::rename(reg.plotdata,c("SubregionName"="Region")))
+
+# arrange sort order in save.plotdata2 by Region, ....
+save.plotdata2 <- arrange(save.plotdata2,  Region, Source, year)
+# cat("\n All PIKE estimates for Africa and its 4 subregion saved to file: report.africa.estimates.csv \n")
+write.csv(save.plotdata2, file="report.africa.estimates.csv", row.names = FALSE)
+```
+
+In most years, we see that PIKE in Southern and Eastern Africa is lower than the continental PIKE, while PIKE in Central and West Africa is higher than the continental PIKE. 
+
+## Posterior belief of trend in *PIKE* in last few years
+
+```{r include=FALSE,echo=FALSE, warning=FALSE, message=FALSE}
+# Estimate the posterior probability that the trend in the last five years is negative.
+# Extract the posterior sample for the margina mean (unweighted) for the last five years
+yearP.eff.post.long1 <- plyr::ldply(reg.fit, function(x){
+   effect <- extract.posterior(x,  effect.name="^YearP.est.MMw\\[", index.type="year", source="MM.p.w")
+   effect$SubregionName = x$pike$SubregionName[1]
+   effect
+})
+yearP.eff.post.long2 <- plyr::ldply(reg.fit, function(x){
+   effect <- extract.posterior(x,  effect.name="^YearP.est.MM\\[",  index.type="year", source="MM.p.uw")
+   effect$SubregionName = x$pike$SubregionName[1]
+   effect
+})
+
+yearP.eff.post.long <- rbind(yearP.eff.post.long1, yearP.eff.post.long2)
+yearP.eff.post.long <- yearP.eff.post.long2
+
+# select the last five years
+last.years <- sort(unique(pike$year),decreasing=TRUE)[1:n.last.years]
+yearP.eff.post.long <- yearP.eff.post.long[ yearP.eff.post.long$year %in% last.years, ]
+
+# compute the slope in pike in the last five years for each sample from the posterior
+yearP.eff.slope <- plyr::ddply(yearP.eff.post.long, c("Source","SubregionName","sim"), function(x){
+    fit <- lm( value ~ year, data=x)
+    slope <- coef(fit)[2]
+    slope.neg <- slope < 0
+    data.frame(intercept=coef(fit)[1], slope=slope, slope.neg=slope.neg)
+})
+head(yearP.eff.slope)
+```
+
+Once the sample from the posterior is available, it is relatively easy to estimate the posterior belief that the trend is negative in the last `r n.last.years` years in each subregion. This is done by estimating the slope in the last `r n.last.years` years for each sample from the posterior, and then the posterior belief that the trend is negative is the proportion  of fitted slopes that are less than zero. The posterior distribution of the slope in the last `r n.last.years` years is shown below. 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+post.belief.slope.negative <- plyr::ddply(yearP.eff.slope, c("Source","SubregionName"), plyr::summarize, 
+                                        p.slope.neg = mean(slope.neg))
+post.belief.slope.negative$p.slope.neg <- formatC(post.belief.slope.negative$p.slope.neg, digits=5, format='f')
+
+
+slope.post <- ggplot(data=yearP.eff.slope, aes(x=slope, y=..density..))+
+  ggtitle(paste0(UNRegion.select,": Posterior distribution of slope in fitted yearly PIKE in last ",n.last.years," years"),
+          subtitle="Based on marginal mean PIKE")+
+  geom_histogram( alpha=0.2)+
+  geom_vline(xintercept=0)+
+  geom_text(data=post.belief.slope.negative, 
+            label=paste("Post belief that slope is < 0 is ", post.belief.slope.negative$p.slope.neg,sep=""),
+            aes(x=Inf, y=Inf), hjust=1, vjust=1)+
+  xlab(paste0("Slope in estimated PIKE in last ",n.last.years," years"))+
+  ylab("Density")+
+  facet_grid(SubregionName~Source)
+slope.post
+```
+
+
+In this case, the posterior belief that the slope in PIKE is negative in the last `r n.last.years` years is very high for the unweighted  *PIKE*`. The posterior belief that *PIKE* in the last `r n.last.years` years is declining is displayed on the top-right corner of the graph. 
+
+The linear trend for the last `r n.last.years` years is shown below.  The shaded area (in blue) is the envelope of posterior trends. 
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+# Find the average slope
+avg.slope <- plyr::ddply(yearP.eff.slope, c("Source","SubregionName"), plyr::summarize,
+                         intercept=mean(intercept),
+                         slope    =mean(slope))
+fitted.avg.slope <- plyr::ddply(avg.slope, c("Source","SubregionName"), function(x){
+       data.frame(year=last.years, pike=x$intercept + x$slope*last.years)
+})
+  
+post.fitted.line <- plyr::ddply(yearP.eff.slope, c("Source","SubregionName","sim"), function(x){
+      data.frame(year=last.years, pike=x$intercept + x$slope*last.years)
+})
+
+# get the actual PIKE values
+reg.YearP.est.MMw <- plyr::ldply(reg.fit, function(x){
+   effect <- extract.effect(x,  effect.name="^YearP.est.MMw\\[", index.type="year", source="MM.p.w")
+   effect$SubregionName = x$pike$SubregionName[1]
+   effect
+})
+reg.YearP.est.MM <- plyr::ldply(reg.fit, function(x){
+   effect <- extract.effect(x,  effect.name="^YearP.est.MM\\[", index.type="year", source="MM.p.uw")
+   effect$SubregionName = x$pike$SubregionName[1]
+   effect
+})
+reg.plotdata <- plyr::rbind.fill( reg.YearP.est.MM, reg.YearP.est.MMw)
+reg.plotdata  <- reg.YearP.est.MM
+
+plyr::l_ply(1:length(unique(reg.plotdata$SubregionName)), function(page){
+  reg.plot <- ggplot(data=reg.plotdata[], 
+                     aes(x=year, y=mean))+
+     ggtitle(paste0(UNRegion.select,": Trend in PIKE in last ", n.last.years, " years"),
+             subtitle="Shaded area is the envelope of posterior trends")+
+     geom_line(data=post.fitted.line, aes(y=pike, group=sim), size=.1, color="blue", alpha=0.05)+
+     geom_line(data=fitted.avg.slope, aes(y=pike), size=2,    color="red", alpha=0.5)+
+     geom_line()+
+     geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.2)+
+     coord_cartesian(ylim=c(0,1))+  
+     geom_text(data=post.belief.slope.negative, 
+            label=paste("Post belief that slope is < 0 is ", post.belief.slope.negative$p.slope.neg,sep=""),
+            aes(x=Inf, y=Inf), hjust=1, vjust=1)+
+     ylab("Estimated PIKE (95% credible interval)")+xlab("Year")+
+      facet_grid_paginate(SubregionName~Source, ncol=1, nrow=1, page=page)
+  plot(reg.plot)
+})
+
+```
+
+The posterior belief that the trend in the last `r n.last.years` is negative  is displayed on the top-right corner of the graph. 
+
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(reg.plotdata, lsmeans.reg, reg.raw.pike, reg.YearP.eff, save.plotdata, save.plotdata2)
+rm(yearP.eff.post.long1, yearP.eff.post.long2, yearP.eff.post.long)
+rm(yearP.eff.slope, post.belief.slope.negative, slope.post, avg.slope, fitted.avg.slope, post.fitted.line)
+###############################################################################################
+##############################################################################################
+#############################################################################################
+```
+
+
+# Model assessment
+
+We performed model assessments of the model at the continental level and expect that similar findings will occur at the sub-regional levels.
+
+
+## Mixing of chains
+
+The Gelman and Rubin’s potential scale reduction factor statistic ($\widehat{R}$; Gelman et al, 2013) measures the relative variation in an estimated parameter among the multiple chains and the variation within a chain. Models should have value of $\widehat{R}$ close to 1 indicating that the posterior space covered by each chain is very similar. The effective sample size is an adjustment to the number of samples in the posterior for autocorrelation. If successive samples from the posterior have a high autocorrelation, then 10 samples from the posterior provide only incremental information over a single sample from the posterior. The effective sample should be reasonably large for all posterior samples to ensure that the posterior mean, standard deviation, and credible intervals are well estimated.
+
+We examined $\widehat{R}$ and the effective sample size for several parameter sets: 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Extract several sets of parameters to estimate max R-hat and minimum effective sample size
+set1 <- extract.effect(all.fit,  effect.name="^Year.eff\\[", index.type="year", source="Year Effects")
+set2 <- extract.effect(all.fit,  effect.name="^Site.eff\\[", index.type="site", source="Site Effects")
+set3 <- extract.effect(all.fit,  effect.name="^sd.site.eff", index.type="    ", source="SD Site effects")
+set4 <- extract.effect(all.fit,  effect.name="^sd.year.site.eff", index.type="    ", source="SD Year Site effects")
+   
+set.all <- plyr::rbind.fill(set1, set2, set3, set4)
+report <- plyr::ddply(set.all, "Source", plyr::summarize,
+                      max.Rhat = max(Rhat),
+                      max.n.eff= max(n.eff),
+                      min.n.eff= min(n.eff))
+kable(report,
+      caption="Rhat and Effective sample size \nfor several parameter sets",
+      col.names=c("Effect","Max Rhat","Max N.eff","Min N.eff"),
+      digits=c(NA,3,0,0)
+) %>%
+  column_spec(column=1,   width="3cm") %>%
+  column_spec(column=2:4, width="1.5cm") %>%
+  kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+
+```
+
+Mixing appears to be adequate with small values of $\widehat{R}$ in all parameter sets.
+
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+# Which sites had small values of n.eff?
+select <- set2$n.eff < 500
+```
+
+The effective sample size is small (<500) for `r sum(select)` sites.
+`r if(sum(select)>0){"The sites with small effective sample sizes are:"}`
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+# Which sites had small values of n.eff?
+if(sum(select)>0){
+  stat <- plyr::ddply(pike, 'MIKEsiteID', plyr::summarize,
+                    avg.pike=sum(NumberOfIllegalCarcasses)/sum(TotalNumberOfCarcasses))
+
+  stat <- merge(stat, set2[set2$n.eff < 500, c("mean","Rhat","n.eff","MIKEsiteID")], all.y=TRUE)
+  kable(stat,
+      caption='Sites with small effective sample sizes',
+      digits=c(NA,2,2,3,0),
+      col.names=c("MIKE site","Avg PIKE","Site effect","Rhat",'N eff')) %>%
+      column_spec(column=c(1,2,3,4,5), width="1cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+}
+```
+
+Sites with small effective sample sizes, tend to have *PIKE* that are very much larger or very much smaller than the average *PIKE* as estimated by their site effect. In particular, a site with a *PIKE* close to 0 or 1 will have a site effect with very small uncertainty and so repeated samples from the posterior will all be very similar. Mixing was adequate (as measured by $\widehat{R}$) and so these low effective sample sizes are acceptable.
+
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(set1, set2, set3, set4, set.all, report, stat, select)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+
+## Examination of trace plots
+
+Trace plots were constructed for the yearly estimates of *PIKE* on the *logit* scale:
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+# get the Year.eff - year effects on the logit scale)
+year.eff.post <- extract.posterior(all.fit, "^Year.eff\\[", index.type="year" )
+# need to convert the sim to chain and sim within chain
+year.eff.post$chain <- trunc((year.eff.post$sim-1)/all.fit$results$BUGSoutput$n.keep)+1
+year.eff.post$sim.in.chain <- ((year.eff.post$sim-1) %% all.fit$results$BUGSoutput$n.keep)+1
+
+
+# see possible problems facet_wrap_paginate
+# at https://github.com/thomasp85/ggforce/issues/201
+
+plyr::l_ply( 1:ceiling(length(unique(year.eff.post$year))/20), function (page){
+  myplot <- ggplot(data=year.eff.post, aes(x=sim.in.chain, y=value, color=as.factor(chain)))+
+   ggtitle(paste(UNRegion.select,": Trace plot of year effects on logit-scale"))+
+   geom_line()+
+   facet_wrap_paginate(~year, ncol=5,nrow=4, page=page, scale="free_y")+
+   scale_color_discrete(name="Chain")+
+   xlab("Simulation within chain")
+  plot(myplot)
+})
+
+```
+
+Similarly, trace plots were constructed for the estimated standard deviation of the $site$ and $site.year$ effects on the *logit* scale:
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+# get the sd.site effects on the logit scale)
+sd.site.eff.post <- extract.posterior(all.fit, "^sd.site.eff", index.type="none" )
+# need to convert the sim to chain and sim within chain
+sd.site.eff.post$chain <- trunc((sd.site.eff.post$sim-1)/all.fit$results$BUGSoutput$n.keep)+1
+sd.site.eff.post$sim.in.chain <- ((sd.site.eff.post$sim-1) %% all.fit$results$BUGSoutput$n.keep)+1
+
+# get the sd.year.site effects on the logit scale)
+sd.year.site.eff.post <- extract.posterior(all.fit, "^sd.year.site.eff", index.type="none" )
+# need to convert the sim to chain and sim within chain
+sd.year.site.eff.post$chain <- trunc((sd.year.site.eff.post$sim-1)/all.fit$results$BUGSoutput$n.keep)+1
+sd.year.site.eff.post$sim.in.chain <- ((sd.year.site.eff.post$sim-1) %% all.fit$results$BUGSoutput$n.keep)+1
+
+plotdata <- rbind(sd.site.eff.post, sd.year.site.eff.post)
+
+myplot <- ggplot(data=plotdata, aes(x=sim.in.chain, y=value, color=as.factor(chain)))+
+   ggtitle(paste(UNRegion.select,": Trace plot of sd of site and year.site effects on logit-scale"))+
+   geom_line()+
+   facet_wrap(~variable, ncol=1, scale="free_y")+
+   scale_color_discrete(name="Chain")+
+   xlab("Simulation within chain")
+myplot
+```
+
+All plots show good evidence of mixing of the three chains sampled from the posterior.
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(year.eff.post, plotdata, myplot)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+## Omnibus goodness of fit
+
+An omnibus goodness-of-fit test can be constructed using Bayesian Predictive Plot (Gellman et al, 2013).  For each sample from the posterior, the Tukey-Freeman statistic (Freeman and Tukey, 1950) is computed using the observed data and a simulated data based on the posterior sample.  The Tukey-Freeman statistic is less sensitive to small observed and expected values than the usual chi-square goodness-of-fit test. 
+
+For example, for a particular value of the posterior sample, the observed Tukey-Freeman statistic is found as the difference between the observed number of illegally killed elephants and the expected number of illegally killed elephants:
+$$TF.obs = \sum_{site.years}{ (\sqrt{IC_{site.year}}-\sqrt{TC_{site.year}\times\pi_{site.year}})^2}$$
+The simulated Tukey-Freeman statistic is found as the difference between a simulated number of illegally killed elephants and  the expected number of illegally killed elephants:
+$$IC.sim_{site.year} \sim Binomial( TC_{site.year}\times \pi_{site.year})$$
+$$TF.sim = \sum_{site.years}{ (\sqrt{IC.sim_{site.year}}-\sqrt{TC_{site.year}\times \pi_{site.year}})^2}$$
+The value of the $TF.obs$ is plotted against the corresponding $TF.sim$ and the proportion of times that the  observer Tukey-Freeman statistic exceeds the simulated Tukey-Freeman statistic is known as the Bayesian p-value. If the model fits well, then these two measures should be similar and the Bayesian p-value will be close to 0.5. If there is lack of fit, then the two measures will be discordant, and the Bayesian p-value will be close to 0 or 1.
+
+The Bayesian Posterior Predictive plot for the omnibus goodness of fit is: 
+
+```{r echo=FALSE, warnings=FALSE, message=FALSE}
+# Compute the Bayesian Posterior Predictive plot for the omnibus test
+# Extract the observed and simulated TF statistic
+TF.post <- extract.TF.post(all.fit)
+Bayesian.p.value <- mean(TF.post$TF.stat.obs>TF.post$TF.stat.sim)
+
+ggplot(data=TF.post, aes(x=TF.stat.obs, y=TF.stat.sim))+
+  ggtitle(paste(UNRegion.select,": Omnibus goodness of fit ",sep=""),
+          subtitle="Reference line of equality shown")+
+  geom_point(alpha=.3)+
+  geom_abline(intercept=0, slope=1)+
+  annotate("text", label=paste("Bayesian p-value: ", formatC(Bayesian.p.value,digits=5, format="f")),
+                   x=-Inf, y=Inf, hjust=0, vjust=1)+
+  xlab("Observed Tukey-Freeman statistic")+
+  ylab("Simulated Tukey-Freeman statistic")
+```
+
+Because the Bayesian p-value is not extreme, the fit is deemed acceptable.
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(TF.post, Bayesian.p.value)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+## Over dispersion 
+
+### General over dispersion
+
+A general measure of over dispersion is to compute a statistic that compares the expected number of illegally killed elephants based on the fitted site-year *PIKE* with the observed number of illegally killed elephants.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+est.pike <- extract.effect(all.fit,  effect.name="^Year.SiteP.est\\[", index.type="year.site", source="Expected")
+pike$obs.pike <- pike$NumberOfIllegalCarcasses/ pike$TotalNumberOfCarcasses
+temp.pike <- merge(pike, est.pike[ ,c("mean","MIKEsiteID","year")], all.x=TRUE)
+temp.pike$E.NumberOfIllegalCarcasses = temp.pike$mean * temp.pike$TotalNumberOfCarcasses
+
+temp.pike$chisq.indiv <- (temp.pike$E.NumberOfIllegalCarcasses - temp.pike$NumberOfIllegalCarcasses)^2/temp.pike$E.NumberOfIllegalCarcasses
+chisq <- sum(temp.pike$chisq.indiv)
+pD <- all.fit$results$BUGSoutput$pD 
+
+od.val <- chisq/(nrow(pike)-pD)
+```
+
+$$Disperson = \sum_{sy}{\frac{(TC_{sy}\times\widehat{\pi}_{sy}-IC_{sy})^2}{TC_{sy}\times\widehat{\pi}_{sy}}}$$
+There are `r nrow(temp.pike)` site-year data points in the sum above.
+
+This is traditionally divided by the  $(\textit{number of data points} - \textit{the number of estimated parameters})$. However, in Bayesian hierarchical models (such as this), the number of parameters is ill-defined. For example, we model site-effects as random variables from a common distribution.  Is the number of parameters 2 (the mean and variance of the common distribution)  or is it the number of sites (we need to estimate the individual site effects). Furthermore shrinkage in Bayesian models implies that the effective number of site estimates is smaller than the number of sites.  A similar problem occurs with the site-year effects.   If you count the individual year effects, the individual site effects, and the individual site-year effects as separate parameters, this gives a total parameter count of  `r length(unique(temp.pike$year))+length(unique(temp.pike$MIKEsiteID))+nrow(temp.pike)` which is more than the number of data points. 
+
+The Bayesian output includes a measure $pD$ defined as the effective number of parameters, i.e. after accounting for shrinkage. We obtain $pD$=`r round(pD,1)` which is considerably less and accounts for shrinkage (Spiegelhalter et al. 2002).  This gives an over dispersion value of
+$$OD = \frac{Dispersion}{\textit{\# data points}-\textit{pD}}$$
+which gives $OD=$ `r round(od.val,1)`. This value is slightly above 2 indicating some evidence of over dispersion, but generally speaking is acceptable.
+
+Some of the expected number of illegally killed elephants are very small which can inflate the numerator. A histogram of the individual components of the *Dispersion* numerator:
+
+```{r echo=FALSE,warning=FALSE, message=FALSE}
+ggplot(data=temp.pike, aes(x=chisq.indiv))+
+   ggtitle("Observed components of Dispersion numerator")+
+   geom_histogram()+
+   xlab("Components of Dispersion")
+```
+
+shows that the fit is generally good, with only a few site years where the contribution is large. The (few) site-years where the observed dispersion component is > 1 are shown below and are acceptable in terms of goodness of fit.
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+select <- temp.pike$chisq.indiv >1
+temp <- temp.pike[select, c("MIKEsiteID","year","TotalNumberOfCarcasses","NumberOfIllegalCarcasses", "obs.pike","mean","E.NumberOfIllegalCarcasses", "chisq.indiv")]
+temp <- temp[order(temp$chisq.indiv),]
+row.names(temp) <- NULL
+kable(temp, 
+      caption="Site-years with largest discrepancy in fit",
+      col.names=c("Site ID","Year","Total number of carcasses","Number of Illegal Carcasses",
+                  "Observed PIKE","Estimated PIKE","Estimated Number of Illegal Carcasses","Contribution to dispersion"),
+      digits=c(NA,0,0,0,2,2,2,2))  %>% 
+      column_spec(column=c(1,2), width="1cm") %>%
+      column_spec(column=c(3,4), width="2cm") %>%
+      column_spec(column=c(5,6), width="1.5cm") %>%
+      column_spec(column=c(7,8), width="1.5cm") %>%
+      kable_styling("bordered",position = "center", full_width=FALSE, latex_options = "HOLD_position")
+
+```
+
+These generally occur when no illegally killed elephants are reported with an intermediate number of total carcasses reported where the model predicts a non-zero *PIKE*. Refer to the earlier sections to look at the individual sites reported here. 
+
+### Overdispersion due to 0 counts
+
+The omnibus test is a general goodness-of-fit measure. The same logic can be used to  investigate specific aspects of the fit. In particular, the number of times that the number of illegally killed elephants is reported as 0 is examined.
+
+```{r echo=FALSE, messag=FALSE, warning=FALSE}
+# how many times does a 0 occur?
+Zero.obs <- sum( pike$NumberOfIllegalCarcasses ==0)
+```
+
+There were `r Zero.obs` cases over all sites and all years where the number of illegally killed elephant  carcasses was reported as zero. After fitting the model, for each sample from the posterior,  we simulate the number of illegally killed elephants in the same way as in the omnibus goodness of fit:
+$$IC.sim_{site.year} \sim Binomial( TC_{site.year}\times\pi_{site.year})$$
+and count the number of times a count of 0 is obtained. This is compared to the observed number of times a 0 is obtained.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+Zero.sim <- extract.posterior(all.fit, "^Zero.sim", index.type=" ", source="Bayesian")
+
+ggplot(data=Zero.sim, aes(x=value))+
+  ggtitle(paste(UNRegion.select,": Histogram of posterior sample of 0 counts",sep=""))+
+  geom_histogram(alpha=0.2)+
+  geom_vline(xintercept=Zero.obs, color="red")+
+  annotate("text", label="Obs number \nof zeros", x=Zero.obs, y=Inf, hjust=0.5, vjust=1)+
+  xlab("Number of counts of 0 illegally killed elephants in simulated data")+
+  ylab("Density")
+```
+
+The number of 0 counts is on the higher side, but not unusual relative to that seen from simulated data.
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(Zero.sim, Zero.obs)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+
+
+## Spatial correlation among site effects
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Extract the site effects and merge with site centroids
+site.eff <- extract.effect(all.fit, effect.name="^Site.eff", index.type="site")
+site.eff <- merge(site.eff, mike.centers[, c("MIKEsiteID","lon","lat")], all.x=TRUE)
+site.eff$posneg <- ifelse(site.eff$mean <0, "Below\nmean", "Above\nmean")
+
+site.effects.spatial.plot <- ggplot(data=site.eff, aes(x=lon, y=lat, size=abs(mean), color=posneg))+
+  ggtitle(paste(UNRegion.select,": Estimated site effects", sep=""))+
+  geom_point(alpha=0.6)+
+  theme(legend.position=c(0,0), legend.justification=c(0,0), legend.direction = "vertical", legend.box = "horizontal")+
+  scale_size_continuous(name="Absolute \neffect\nsize")+
+  scale_color_discrete (name="Sign\neffect\nsize")+
+  xlab("Longitude")+ylab("Latitude")
+#site.effects.spatial.plot
+
+site.effects.spatial.plot2 <- base.map2 +
+  geom_point(data=site.eff, aes(x=lon, y=lat, size=abs(mean), shape=posneg, color=posneg))+
+  ggtitle(paste(UNRegion.select,": Estimated site effects", sep=""))+
+  geom_point(alpha=0.6)+
+  #theme(legend.position=c(0,0), legend.justification=c(0,0), legend.direction = "vertical", legend.box = "horizontal")+
+  scale_size_continuous(name="Absolute \neffect\nsize")+
+  scale_color_manual (name="Direction\nsite\neffect", values = c("red","green"))+
+  scale_shape_discrete (name="Direction\nsite\neffect")+
+  xlab("Longitude")+ylab("Latitude")+xlim(-20,50)
+```
+
+The (random) site effects have been modelled as independent random effects without explicitly accounting for the spatial structure of the data.  However, we find that sites that are close geographically have similar site effects.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#site.effects.spatial.plot
+site.effects.spatial.plot2
+```
+
+Sites that have  *PIKE* consistently above the continental average are labelled as *Above the mean*;  sites that have *PIKE* consistently below the continental average are labelled as *Below the mean*.
+
+We notice that sites that are close geographically tend to have similar site effects  (size of dot) and in the same direction (above or below the mean, color of dots). This implies there is a spatial correlation among the site effects that has not been directly accounted for in the analysis.
+
+The current analysis is still valid, but inefficient because it has not used the spatial correlation to improve inference. If spatial autocorrelation is explicitly modelled, then information is shared among sites that are geographically close, i.e., if the *PIKE* increases in one site, then spatial autocorrelation would imply that it would tend to also increase in a nearby site. Of course, if the sites are in different countries with different levels of enforcement or other  covariates that impact *PIKE*, an explicit spatial autocorrelation could introduce a spurious relationship between the *PIKE* in the two sites unless these other factors (law enforcement etc.) are also modelled.  The explicit spatial autocorrelation models rapidly become more complex to account for these features.
+
+Because the current analysis treats all sites as independent (rather than spatially correlated), the uncertainty  in the overall yearly *PIKE* is slightly smaller than from a model with explicity spatial autocorrelation because the effective number of sites used in computing the overall yearly *PIKE* is smaller when autocorrelation is explicitly modelled. This in turn, implies that the uncertainty of a trend (e.g. trend in the last five years) in the currently model may  be slightly understated as well and the posterior belief in a trend will be higher in the current model compared to the model with an explicity spatial autocorrelation. We believe such effects are minor given the spase data at many sites, the large amount of missing site.years and the potential breaking of spatial autocorrelation across country borders. 
+
+A potential improvement to the current analysis may be to add another level of random effects (country effects) so that points from the same country that have related site effects then experience a common country effect. This model is currently under investigation.
+
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(site.effects.spatial.plot, site.eff)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+
+## Site effects vs number of carcasses observed
+
+A plot of the estimated site effects vs. the total number of carcasses observed over the year is:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# look at site effects vs. total sample size for each site
+site.eff <- extract.effect(all.fit, effect.name="^Site.eff", index.type="site")
+
+ss.by.site <- plyr::ddply(pike, "MIKEsiteID", plyr::summarize, total.carcasses=sum(TotalNumberOfCarcasses) )
+ss.by.site <- merge(ss.by.site, site.eff)
+
+ggplot(data=ss.by.site, aes(x=log(total.carcasses), y=mean))+
+  ggtitle("Site effects vs. total sample size")+
+  geom_point()+
+  geom_errorbar(aes(ymin=X2.5., ymax=X97.5.), width=.01)+
+  xlab("log(Total carcasses over all years)")+
+  ylab("Site effect and 95% credible interval")+
+  geom_hline(yintercept=0)+
+  geom_text(data=ss.by.site[ abs(ss.by.site$mean) > 2.5,], label=ss.by.site$MIKEsiteID[ abs(ss.by.site$mean) > 2.5])
+
+```
+
+This plot shows that the uncertainty in the site effects declines with the total number of carcasses 
+observed (as expected), and a random scatter about 0 (also as expected). There are a few MIKE sites
+with extreme site effects as labelled in the plot.
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(ss.by.site,site.eff)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+
+## Autocorrelation in year.site effects
+
+This model assumes that $Year.Site$ effects are independent from year-to-year. However,
+local effects may last for several years, and so there may be autocorrelation present
+in the $Year.Site$ effects.
+
+A plot of the $Year.Site_i$ vs. the $Year.Site_{i-1}$ (i.e. a lag 1 plot) is:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Year.Site.eff <- extract.effect(all.fit, '^Year.Site.eff\\[', index.type='year.site', source="Bayesian")
+# this includes Year.Sites not observed which need to be removed
+pike <- merge(pike, all.fit$year.index, all.x=TRUE)
+pike <- merge(pike, all.fit$site.index, all.x=TRUE)
+Year.Site.eff <- merge(Year.Site.eff, pike[,c("year.index","site.index")], all.y=TRUE)
+# find the lag 1 values. We ignore years that are skipped on a site
+Year.Site.eff <- plyr::ddply(Year.Site.eff, c("site.index"), function(x){
+   # compute the lag 1 effect for each site
+   x <- x[ order(x$year.index),]
+   x$mean.lag1 <- c(NA, x$mean[-length(x$mean)])
+   x
+})
+
+lag1.corr <- cor(Year.Site.eff$mean.lag1, Year.Site.eff$mean, use='complete.obs')
+ggplot(data=Year.Site.eff, aes(x=mean.lag1, y=mean))+
+  ggtitle(paste(UNRegion.select,": Lag 1 plot of Year.Site effects",sep=""))+
+  geom_point()+
+  geom_smooth(method="lm", se=FALSE)+
+  ylab("Year.Site effect in year i")+xlab("Year.Site effect in year i-1")+
+  annotate("text", label=paste("Correlation: ", round(lag1.corr,2), sep=""), y=-Inf, x=Inf, hjust=1, vjust=-.2)
+
+```
+
+shows a very model correlation over time which is sufficiently small that is not a problem.
+Note that only those site-years where data are collected are used in the above plot.
+
+## Year.Site effect for each site
+
+A plot of the $Year.Site$ effect for each site:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(data=Year.Site.eff, aes(x=mean, y=MIKEsiteID))+
+  ggtitle(paste(UNRegion.select,": Year.Site effects by site",sep=""))+
+  geom_point( position=position_jitter(h=.2))+
+  geom_vline(xintercept=0)+
+  xlab("Year.Site effect")+ylab("MIKE Site id")+
+  geom_text(data=Year.Site.eff[abs(Year.Site.eff$mean)>3,],
+            label=Year.Site.eff$year[abs(Year.Site.eff$mean)>3])
+```
+
+shows that only a few years had *PIKE* values within a site that could be considered unusual for
+that site. 
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(lag1.corr, Year.Site.eff)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+## Observed vs. predicted *PIKE*
+
+A plot of observed *PIKE* in each year.site vs. the predicted *PIKE* is:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+est.pike <- extract.effect(all.fit,  effect.name="^Year.SiteP.est\\[", index.type="year.site", source="Expected")
+pike$obs.pike <- pike$NumberOfIllegalCarcasses/ pike$TotalNumberOfCarcasses
+
+#quantile(pike$TotalNumberOfCarcasses, prob=seq(.1,.9,.1))
+
+plotdata <- merge(pike, est.pike[ ,c("mean","MIKEsiteID","year")], all.x=TRUE)
+plotdata$n.carcass <- car::recode(plotdata$TotalNumberOfCarcasses,
+                              " lo:10='01-10'; 10:25='10-25'; 25:hi='25+'     ")
+ggplot(data=plotdata, aes(x=mean, y=obs.pike, size=n.carcass, color=n.carcass))+
+   ggtitle(paste(UNRegion.select,": Observed vs. Predicted PIKE"))+
+   geom_point(shape=1)+
+   geom_abline(intercept=0, slope=1)+
+   scale_color_discrete(name="Number\nof\ncarcasses")+
+   scale_size_discrete (name="Number\nof\ncarcasses")+
+   #scale_colour_brewer(direction=-1)+
+   xlab("Mean predicted PIKE from Bayesian model")+
+   ylab("Observed PIKE")
+
+```
+
+The fit is generally very good. 
+For site-years where the number of carcasses was very small ($<10$) and the observed
+*PIKE* was 0 or 1, the estimated *PIKE* is pulled towards the yearly average for that year.
+For site-years with large number of carcasses ($>25$) the estimated *PIKE* matches 
+closely with the observed *PIKE*. For site-years with intermediate number of
+carcasses, the estimates are shrunk slightly towards the mean for that year.
+
+This can also be seen in the plots of observed and fitted *PIKE* for the individual MIKE sites:
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+# Make a plot of trend over time
+
+plotdata <- merge(pike, est.pike, all.y=TRUE)
+plotdata$n.carcass <- car::recode(plotdata$TotalNumberOfCarcasses,
+                              " lo:10='00-10'; 10:25='10-25'; 25:hi='25+'     ")
+
+YearP.eff.MM <- as.data.frame(extract.effect(all.fit,  effect.name="^YearP.est.MM\\[",    index.type="year", source="All sites"))
+
+plotdata$X2.5.  <- pmax(0, pmin(1, plotdata$X2.5.))
+plotdata$X97.5. <- pmax(0, pmin(1, plotdata$X97.5.))
+
+plyr::l_ply(1:ceiling(length(unique(plotdata$MIKEsiteID))/16), function(page){
+  myplot <- ggplot(data=plotdata[!is.na(plotdata$obs.pike),], aes(x=year, y=obs.pike))+
+   ggtitle(paste(UNRegion.select,": Observed and predicted PIKE for individual MIKE sites"))+
+   geom_point(aes(size=n.carcass, color=n.carcass), shape=1)+
+   geom_line(data=plotdata,aes(y=mean), color="blue")+
+   geom_ribbon(data=plotdata, aes(ymin=X2.5., ymax=X97.5.), alpha=0.2, fill="blue", linetype=0)+
+   geom_line(data=YearP.eff.MM, aes(y=mean), color="black", size=.5, linetype="dashed", alpha=0.5)+
+   #scale_colour_brewer(direction=-1)+
+   xlab(paste0("Year\nDashed line is unweighted marginal mean PIKE at continental level",
+               "\nBlue and shading is predicted PIKE at site level with 95% credible interval"))+
+   ylab("PIKE")+ylim(0,1)+
+   scale_color_discrete(name="Number\nof\ncarcasses")+
+   scale_size_discrete (name="Number\nof\ncarcasses")+
+   facet_wrap_paginate(~MIKEsiteID, ncol=4, nrow=4, scales="free_y", page=page)
+  plot(myplot)
+})
+```
+
+There are several interesting patterns that illustrate the features of the model. In years with many carcasses reported, the estimated site-year *PIKE* will closely match the observed site-year *PIKE*. In years with few carcasses reported, the estimated site-year *PIKE* will be pulled towards the continental trend after accounting for the observed relationship between this sites *PIKE* and the continental trend. 
+
+
+```{r echo=FALSE, warning=FALSE, messge=FALSE}
+# cleanup
+rm(all.fit.noSY, DIC, DIC.noSY, TF.post.noSY, Bayesian.p.value.noSY, plotdata, est.pike)
+################################################################################################
+###############################################################################################
+##############################################################################################
+```
+
+
+
+# References
+
+Burn, R.W., Underwood, F.M., Blanc J. (2011). Global Trends and Factors Associated with the Illegal Killing of Elephants: A Hierarchical Bayesian Analysis of Carcass Encounter Data. PLoS ONE 6(9): e24165. https://doi.org/10.1371/journal.pone.0024165
+
+Chen, Ming-Hui, and Qi-Man Shao. (1999).  Monte Carlo Estimation of Bayesian Credible and HPD Intervals. Journal of Computational and Graphical Statistics 8, 69-92.  doi:10.2307/1390921.
+
+Freeman, M.F. & Tukey, J.W. (1950).  Transformations related to the angular and square root.  Annals of Mathematical Statistics, 221, 607–611.
+
+Gelman, A, Carlin, J.B., Stern, H.S., Dunson, D.B., Vehtari, A. and Rubin, D.R. (2013).  Bayesian Data Analysis, 3rd Edition. Chapman and Hall/CRC.
+
+Gimenez, O., Morgan, B.J., and Brooks, S. (2009). Weak identifiability in models for mark-recapture-recovery data.  pp.1055-1068 in Thomson, Cooch and Conroy (eds) Modeling demographic processes in marked populations. Springer.
+
+lsmeans (2019). pike TREND ANALYSIS USING THE LEAST-SQUARES MEANS APPROACH in R. <https://github.com/CITES-MIKE/MIKE-LSMEANS>
+
+Lunn, D., Jackson, C., Best, N., Thomas, A. and Spiegelhalter, D. (2012).  The BUGS Book – A practical introduction to Bayesian Analysis.  Chapman and Hall/CRC Press.
+
+Millar, Russell B. (2009).  Comparison of Hierarchical Bayesian Models for Overdispersed Count  Data Using DIC and Bayes’ Factors. Biometrics, 65,  962-69.
+
+Plummer, M. (2003).  JAGS: A program for analysis of Bayesian graphical models using Gibbs sampling.  Proceedings of the 3rd International Workshop on Distributed Statistical Computing (DSC 2003), March 20–22, Vienna, Austria. ISSN 1609-395X.
+
+R Core Team (2020).  R: A language and environment for statistical computing.  R Foundation for Statistical Computing, Vienna, Austria.
+
+Rubin,D. B. (1981)  The Bayesian Bootstrap.  The Annals of Statistics 9, 130-134.  http://www.jstor.org/stable/2240875
+
+Spiegelhalter, D.J., Best, N.G., Carlin, B.P. and Van Der Linde, A. (2002). Bayesian measures of model complexity and fit.  Journal of the Royal Statistical Society: Series B (Statistical Methodology), 64, 583-639. 
+doi:10.1111/1467-9868.00353
+
+Thouless, C.R.,  H.T. Dublin, J.J. Blanc, D.P. Skinner, T.E. Daniel, R.D. Taylor, F. Maisels, H. L. Frederick and P. Bouché (2016).  African Elephant Status Report 2016: an update from the African Elephant Database.  Occasional Paper Series of the IUCN Species Survival Commission,  No. 60 IUCN / SSC Africa Elephant Specialist Group. IUCN, Gland, Switzerland. vi + 309pp
+
+Zuur, A. F. (2019). Statistical analysis of spatial-temporal elephant poaching data using R-INLA. Prepared for CITES.
+
+

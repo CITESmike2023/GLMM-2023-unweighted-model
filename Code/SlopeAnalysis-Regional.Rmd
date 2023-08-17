@@ -1,0 +1,263 @@
+---
+title: "Africa - Regional slope analysis"
+author: "mk"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, error=FALSE)
+library(patchwork)
+library(tidyverse)
+library(bayestestR)
+library(kableExtra)
+library(knitr)
+```
+
+```{r}
+# Load the .Rdata, 
+# Created using save(all.fit, file="continental-fits.Rdata") 
+# in "report.africa.technical.update.Rmd". 
+
+load("report-africa-subregional-fit.Rdata")
+source("fitting-functions2.R")  # extraction and other functions
+```
+
+## A: Regionl PIKE trends for specfied break point year (2011)
+### *First epoch*
+
+```{r,firstrimeperiod, results ='asis'}
+# Estimate the posterior probability that the trend in the last N years is negative.
+# Extract the posterior sample for the marginal mean (unweighted) for the N years:
+# yearP.eff.post.long <- extract.posterior(all.fit, "^YearP.est.MM\\[", index.type="year" )
+
+regions <- c(1,2,3,4) 
+
+for(i in regions) {
+
+yearP.eff.post.long <- extract.posterior(reg.fit[[i]], "^YearP.est.MM\\[", index.type="year" )
+region.name <- reg.fit[[i]]$subregion.index[1,1]
+
+# Set year range below: use same range as in the Continental 
+# slope analysis (break point 2011)
+
+StartYear <- 2003
+EndYear   <- 2011
+
+
+N.Years <- StartYear:EndYear
+
+yearP.eff.post.long <- yearP.eff.post.long[ yearP.eff.post.long$year %in% N.Years, ]
+
+# compute the slope in pike in the last N years for each sample from the posterior
+yearP.eff.slope <- plyr::ddply(yearP.eff.post.long, "sim", function(x){
+    fit <- lm( value ~ year, data=x)
+    slope <- coef(fit)[2]
+    slope.neg <- slope < 0
+    data.frame(intercept=coef(fit)[1], slope=slope, slope.neg=slope.neg)
+})
+
+# plot estimates and lines 
+gg <- ggplot(yearP.eff.post.long, aes(x= year, y=value)) + geom_point(position=position_jitter(w=0.2), alpha=.2) 
+gg <- gg + geom_abline(data=yearP.eff.slope, aes(intercept=intercept, slope=slope, x=NULL, y=NULL), alpha=0.01)
+gg <- gg + ggtitle(region.name)
+
+# Plot distribution of the post. belief slope with HDI bounds
+
+HDI95 <- ci(yearP.eff.slope$slope,method = "HDI", ci = .95)
+HDI95.ci <- data.frame(x=unlist(HDI95)[2:3], y=0)
+
+post.belief.slope.negative <- formatC(mean(yearP.eff.slope$slope.neg), digits=2, format='f')
+
+slope.post <- ggplot(data=yearP.eff.slope, aes(x=slope, y=..density..)) +
+              geom_histogram(alpha=0.2) + geom_vline(xintercept=0, color="red") +  
+              ggtitle("Posterior distribution of slope in \n fitted yearly PIKE in \n between Start & End year",
+              subtitle="Based on unweighted marginal mean \n - MM.p.uw") +
+              annotate("text", label=paste("Post belief that slope is < 0 is ", post.belief.slope.negative, sep=""),
+              x=Inf, y=Inf, hjust=1, vjust=1) +
+              xlab("Slope in estimated PIKE in N years") + ylab("Density")
+
+slope.post <- slope.post + geom_vline(xintercept = HDI95.ci[,1], lty =2) 
+slope.post <- slope.post + geom_text(data=HDI95.ci, aes(x=x, y=y, label=round(x,3))) 
+ 
+# put the two plots together
+print(gg + slope.post)
+cat("\n")
+
+# Print results in table form 
+
+HDI95.tbl.ci <-  yearP.eff.slope %>% 
+                 summarize(region = region.name, StartYear, EndYear,
+                   mean.slope = mean(slope),        
+                   HDI.lo =  ci(slope ,method = "HDI", ci = 0.95 )[[2]],
+                   HDI.hi =  ci(slope ,method = "HDI", ci = 0.95 )[[3]],
+                   HDI.ci  = 0.95,
+                   HDI.flag = ifelse((HDI.lo <= 0) & (HDI.hi >= 0),
+                                        "HDI includes zero", "HDI excludes zero"),
+                   post.belief.slope.negative = mean(slope.neg))  %>%
+                   ungroup()
+
+
+print(kable(HDI95.tbl.ci, digits = 3) %>%  
+      kable_styling(bootstrap_options = c("striped", "hover")))
+ 
+ cat("\n")
+}
+```
+
+### *Second epoch*
+
+```{r,secondtimeperiod, results ='asis'}
+# Estimate the posterior probability that the trend in the last N years is negative.
+# Extract the posterior sample for the marginal mean (unweighted) for the N years:
+# yearP.eff.post.long <- extract.posterior(all.fit, "^YearP.est.MM\\[", index.type="year" )
+
+regions <- c(1,2,3,4) 
+
+for(i in regions) {
+
+yearP.eff.post.long <- extract.posterior(reg.fit[[i]], "^YearP.est.MM\\[", index.type="year" )
+region.name <- reg.fit[[i]]$subregion.index[1,1]
+
+# Set year range below: use same range as in the continetial 
+# slope analysis (break point 2011 to last year data was collected)
+
+StartYear <- 2011
+EndYear <- max(yearP.eff.post.long$year) # get  last year of the analysis 
+N.Years <- StartYear:EndYear
+
+yearP.eff.post.long <- yearP.eff.post.long[ yearP.eff.post.long$year %in% N.Years, ]
+
+# compute the slope in pike in the last N years for each sample from the posterior
+yearP.eff.slope <- plyr::ddply(yearP.eff.post.long, "sim", function(x){
+    fit <- lm( value ~ year, data=x)
+    slope <- coef(fit)[2]
+    slope.neg <- slope < 0
+    data.frame(intercept=coef(fit)[1], slope=slope, slope.neg=slope.neg)
+})
+
+# plot estimates and lines 
+gg <- ggplot(yearP.eff.post.long, aes(x= year, y=value)) + geom_point(position=position_jitter(w=0.2), alpha=.2) 
+gg <- gg + geom_abline(data=yearP.eff.slope, aes(intercept=intercept, slope=slope, x=NULL, y=NULL), alpha=0.01)
+gg <- gg + ggtitle(region.name)
+
+# Plot distribution of the post. belief slope with HDI bounds
+
+HDI95 <- ci(yearP.eff.slope$slope,method = "HDI", ci = .95)
+HDI95.ci <- data.frame(x=unlist(HDI95)[2:3], y=0)
+
+post.belief.slope.negative <- formatC(mean(yearP.eff.slope$slope.neg), digits=2, format='f')
+
+slope.post <- ggplot(data=yearP.eff.slope, aes(x=slope, y=..density..)) +
+              geom_histogram(alpha=0.2) + geom_vline(xintercept=0, color="red") +  
+              ggtitle("Posterior distribution of slope in \n fitted yearly PIKE in \n between Start & End year",
+              subtitle="Based on unweighted marginal mean \n - MM.p.uw") +
+              annotate("text", label=paste("Post belief that slope is < 0 is ", post.belief.slope.negative, sep=""),
+              x=Inf, y=Inf, hjust=1, vjust=1) +
+              xlab("Slope in estimated PIKE in N years") + ylab("Density")
+
+slope.post <- slope.post + geom_vline(xintercept = HDI95.ci[,1], lty =2) 
+slope.post <- slope.post + geom_text(data=HDI95.ci, aes(x=x, y=y, label=round(x,3))) 
+ 
+# put the two plots together
+print(gg + slope.post)
+cat("\n")
+
+# Print results in table form 
+
+HDI95.tbl.ci <-  yearP.eff.slope %>% 
+                 summarize(region = region.name, StartYear, EndYear,
+                   mean.slope = mean(slope),        
+                   HDI.lo =  ci(slope ,method = "HDI", ci = 0.95 )[[2]],
+                   HDI.hi =  ci(slope ,method = "HDI", ci = 0.95 )[[3]],
+                   HDI.ci  = 0.95,
+                   HDI.flag = ifelse((HDI.lo <= 0) & (HDI.hi >= 0),
+                                        "HDI includes zero", "HDI excludes zero"),
+                   post.belief.slope.negative = mean(slope.neg))  %>%
+                   ungroup()
+
+
+print(kable(HDI95.tbl.ci, digits = 3) %>%  
+      kable_styling(bootstrap_options = c("striped", "hover")))
+ 
+ cat("\n")
+}
+```
+
+## B. Last 5 years regional trend
+
+```{r, last5yrs,results ='asis'}
+# Estimate the posterior probability that the trend in the last five years is negative.
+# Extract the posterior sample for the marginal mean (unweighted) for the last five years:
+# yearP.eff.post.long <- extract.posterior(all.fit, "^YearP.est.MM\\[", index.type="year" )
+
+for(i in c(1,2,3,4)) {
+
+yearP.eff.post.long <- extract.posterior(reg.fit[[i]], "^YearP.est.MM\\[", index.type="year" )
+region.name <- reg.fit[[i]]$subregion.index[1,1]
+
+# select the last five years
+last.five.years <- sort(unique(yearP.eff.post.long$year),decreasing=TRUE)[1:5]
+
+yearP.eff.post.long <- yearP.eff.post.long[ yearP.eff.post.long$year %in% last.five.years, ]
+
+# compute the slope in pike in the last five years for each sample from the posterior
+yearP.eff.slope <- plyr::ddply(yearP.eff.post.long, "sim", function(x){
+    fit <- lm( value ~ year, data=x)
+    slope <- coef(fit)[2]
+    slope.neg <- slope < 0
+    data.frame(intercept=coef(fit)[1], slope=slope, slope.neg=slope.neg)
+})
+
+# plot estimates and lines 
+gg <- ggplot(yearP.eff.post.long, aes(x= year, y=value)) + geom_point(position=position_jitter(w=0.2), alpha=.2) 
+gg <- gg + geom_abline(data=yearP.eff.slope, aes(intercept=intercept, slope=slope, x=NULL, y=NULL), alpha=0.01)
+gg <- gg + ggtitle(region.name)
+
+# Plot distribution of the post. belief slope with HDI bounds
+
+HDI95 <- ci(yearP.eff.slope$slope,method = "HDI", ci = .95)
+HDI95.ci <- data.frame(x=unlist(HDI95)[2:3], y=0)
+
+post.belief.slope.negative <- formatC(mean(yearP.eff.slope$slope.neg), digits=2, format='f')
+
+slope.post <- ggplot(data=yearP.eff.slope, aes(x=slope, y=..density..)) +
+              geom_histogram(alpha=0.2) + geom_vline(xintercept=0, color="red") +  
+              ggtitle("Posterior distribution of slope in \n fitted yearly PIKE in \n last five years",
+              subtitle="Based on unweighted marginal mean\n-MM.p.uw") +
+              annotate("text", label=paste("Post belief that slope is < 0 is ", post.belief.slope.negative, sep=""),
+              x=Inf, y=Inf, hjust=1, vjust=1) +
+              xlab("Slope in estimated PIKE in last five years") + ylab("Density")
+
+slope.post <- slope.post + geom_vline(xintercept = HDI95.ci[,1], lty =2) 
+slope.post <- slope.post + geom_text(data=HDI95.ci, aes(x=x, y=y, label=round(x,3))) 
+ 
+# put the two plot together
+print(gg + slope.post)
+
+
+
+# Print results in table form 
+
+HDI95.tbl.ci <-  yearP.eff.slope %>% 
+                 summarize(region = region.name,
+                   years = paste(range(last.five.years), collapse = "-"),
+                   mean.slope = mean(slope),
+                   HDI.lo =  ci(slope ,method = "HDI", ci = 0.95 )[[2]],
+                   HDI.hi =  ci(slope ,method = "HDI", ci = 0.95 )[[3]],
+                   HDI.ci  = 0.95,
+                   HDI.flag = ifelse((HDI.lo <= 0) & (HDI.hi >= 0),
+                                        "HDI includes zero", "HDI excludes zero"),
+                   post.belief.slope.negative = mean(slope.neg))  %>%
+                   ungroup()
+
+
+print(kable(HDI95.tbl.ci, digits = 3) %>%  
+      kable_styling(bootstrap_options = c("striped", "hover")))
+
+cat("\n")
+}
+```
+
