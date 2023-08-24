@@ -67,7 +67,7 @@ This will take two runs, one for the *html* file and one for the *pdf* file.
 move to the *ReportAndEstimates* directory.
 - Put the date of creation in the front of the created *.Rdata* files which saves the 
 posterior samples from the continental or subregional fits. You likely will NOT want to manage these files with GitHub because of their size.
--	To generate a slope analysis report, based on the posterior samples, open and knit the *Slope_Analysis.Rmd* document to create the html/pdf documents.
+-	To generate a slope analysis report, based on the posterior samples, open and knit the *SlopeAnalysis-Continental.Rmd & SlopeAnalysis-Regional.Rmd* documents to create the html/pdf documents.
 
 # Change Log
 
