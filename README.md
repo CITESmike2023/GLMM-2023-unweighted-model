@@ -71,6 +71,9 @@ posterior samples from the continental or subregional fits. You likely will NOT 
 
 # Change Log
 
+#### *2023-10-01* 
+URL link to the SC77 Doc. 63.1 added to the *README.md* file.
+
 #### *2023-09-15* 
 Code directory updated as required for the new analysis and *README.md* file updated to include additional introductory text, and hyperlink to the MIKE report.
 
