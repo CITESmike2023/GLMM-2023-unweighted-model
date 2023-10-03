@@ -19,7 +19,7 @@ The Bayesian GLMM (unweighted)  approach is used to report PIKE trends in the MI
 
  A list of GitHub repositories for previous analysis can be found <a href= "https://cites.org/eng/prog/mike/index.php/portal#MIKE%20Analytical%20Code"> here </a>.
  
-This GitHub repository includes the code to generate the PIKE trend analysis for 2003-2022. The findings of the analysis are reproted in SC77 Doc. 63.1 (page 14).  <a href="https://cites.org/sites/default/files/documents/E-SC77-63-01.pdf"> Click here to view the doucument.</a>  
+This GitHub repository includes the code to generate the PIKE trend analysis for 2003-2022. The findings of the analysis are reproted in SC77 Doc. 63.1 (page 14). <a href="https://cites.org/sites/default/files/documents/E-SC77-63-01.pdf"> Click here to view the doucument.</a>  
 
 
 # MIKE - GLMM  (unweighted) Model for PIKE
